@@ -9,5 +9,5 @@ Icon=kambos
 Terminal=false
 Categories=Utility;Security;GTK;
 StartupNotify=true
-MimeType=application/x-kambos-encrypted;application/octet-stream;
+MimeType=application/x-rinn-encrypted;
 Keywords=Encryption;Security;Argon2;KDF;File;GTK;AES;Ransomware;
