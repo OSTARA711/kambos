@@ -1,5 +1,5 @@
 /*
- * File: kambos.c
+ * File: ~/kambos/kambos.c
  * Project: KAMBOS File Encryptor
  *
  * GTK3 + libsodium Argon2id + OpenSSL AES-256-GCM.
@@ -14,18 +14,16 @@
  *   - File contents are processed in bounded-size chunks.
  *   - Decrypted plaintext is kept in a private temporary file until
  *     AES-GCM authentication succeeds.
- *   - Output is published by atomic rename only after success.
+ *   - Output is published only after successful processing.
  *   - Temporary and recovered files use owner-only permissions (0600).
  *   - KDF parameters read from a file are validated before use.
  *
  * Build:
- *   gcc -Wall -Wextra -Wpedantic -O2 -o kambos kambos.c \
- *       $(pkg-config --cflags --libs gtk+-3.0) \
- *       -lsodium -lssl -lcrypto -pthread
+ *   make clean && make
  *
  * NOTE:
- *   This implementation introduces RINN format version 2, and it is not
- *   compatible with files created by the previous format implementation.
+ *   This implementation uses RINN format version 2 and is not compatible
+ *   with files created by the previous format implementation.
  */
 
 #define _POSIX_C_SOURCE 200809L
@@ -42,6 +40,7 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <libgen.h>
+#include <math.h>
 
 #include <gtk/gtk.h>
 #include <glib.h>
@@ -70,13 +69,6 @@
 
 #define CRYPTO_CHUNK_SIZE 65536
 
-/*
- * Argon2id baseline: libsodium's interactive profile.
- *
- * The exact parameters are stored in the RINN header.
- * These limits are also enforced when opening a RINN file, so a
- * malformed file cannot request arbitrary amounts of KDF resources.
- */
 #define RINN_ARGON_OPS_MIN 1ULL
 #define RINN_ARGON_OPS_MAX 10ULL
 
@@ -89,7 +81,6 @@
 #define RINN_ARGON_MEM_DEFAULT \
     ((uint64_t)crypto_pwhash_MEMLIMIT_INTERACTIVE)
 
-/* Header offsets. */
 #define RINN_OFF_VERSION 8
 #define RINN_OFF_CIPHER 9
 #define RINN_OFF_KDF 10
@@ -106,6 +97,11 @@
 
 typedef struct {
     GtkWidget *window;
+    GtkWidget *overlay;
+    GtkWidget *frame_area;
+    GtkWidget *content_box;
+    GtkWidget *drag_region;
+
     GtkWidget *file_button;
     GtkWidget *action_button;
     GtkWidget *status_label;
@@ -113,7 +109,12 @@ typedef struct {
     GtkWidget *det_desc;
     GtkWidget *det_magic;
     GtkWidget *progress;
-    GtkWidget *logo_image;
+
+    GtkWidget *minimise_button;
+    GtkWidget *restore_button;
+    GtkWidget *maximise_button;
+
+    GdkPixbuf *frame_pixbuf;
 
     gchar *current_path;
     char exe_dir[PATH_MAX];
@@ -137,7 +138,7 @@ typedef struct {
 } RinnHeader;
 
 /* -----------------------------------------------------------
- * Detection structures
+ * File detection structures
  * ----------------------------------------------------------- */
 
 typedef struct {
@@ -249,8 +250,6 @@ static int file_write_all(
     return fwrite(buf, 1, len, f) == len ? 0 : -1;
 }
 
-/* Encode/decode unsigned 64-bit integers in network byte order. */
-
 static void put_u64_be(unsigned char out[8], uint64_t value)
 {
     for (int i = 7; i >= 0; --i) {
@@ -287,9 +286,8 @@ static int valid_argon_params(uint64_t ops, uint64_t mem)
 
 /*
  * Reject unsafe or malformed stored basenames.
- *
- * POSIX filenames cannot contain NUL or '/', but an untrusted encrypted
- * file can contain arbitrary bytes in its metadata.
+ * POSIX filenames cannot contain NUL or '/', but untrusted encrypted
+ * metadata can contain arbitrary bytes.
  */
 static int valid_original_name(const unsigned char *name, size_t len)
 {
@@ -326,12 +324,6 @@ static void free_rinn_header(RinnHeader *h)
  * RINN header parsing
  * ----------------------------------------------------------- */
 
-/*
- * Reads and validates a version-2 header from the current file position.
- *
- * The returned raw header bytes are retained unchanged because the exact
- * bytes must be supplied to AES-GCM as additional authenticated data.
- */
 static int read_rinn_header(FILE *f, RinnHeader *h)
 {
     unsigned char fixed[RINN_FIXED_HEADER_LEN];
@@ -363,7 +355,8 @@ static int read_rinn_header(FILE *f, RinnHeader *h)
     memcpy(h->nonce, fixed + RINN_OFF_NONCE, NONCE_LEN);
 
     uint32_t name_len_be;
-    memcpy(&name_len_be, fixed + RINN_OFF_NAME_LEN, sizeof(name_len_be));
+    memcpy(&name_len_be, fixed + RINN_OFF_NAME_LEN,
+           sizeof(name_len_be));
 
     uint32_t name_len = ntohl(name_len_be);
 
@@ -371,7 +364,6 @@ static int read_rinn_header(FILE *f, RinnHeader *h)
         return -7;
 
     h->len = RINN_FIXED_HEADER_LEN + (size_t)name_len;
-
     h->bytes = malloc(h->len + 1);
 
     if (!h->bytes) {
@@ -381,11 +373,8 @@ static int read_rinn_header(FILE *f, RinnHeader *h)
 
     memcpy(h->bytes, fixed, sizeof(fixed));
 
-    if (fread(
-            h->bytes + RINN_FIXED_HEADER_LEN,
-            1,
-            name_len,
-            f) != name_len) {
+    if (fread(h->bytes + RINN_FIXED_HEADER_LEN,
+              1, name_len, f) != name_len) {
         free_rinn_header(h);
         return -9;
     }
@@ -422,7 +411,6 @@ static char *read_rinn_original_basename(const char *path)
         return NULL;
 
     char *result = strdup(h.original_name);
-
     free_rinn_header(&h);
 
     return result;
@@ -465,10 +453,6 @@ static int derive_key(
  * Input/output path safety
  * ----------------------------------------------------------- */
 
-/*
- * Only regular input files are accepted.
- * Reject output paths that resolve to the same existing file as input.
- */
 static int validate_input_output(
     const char *inpath,
     const char *outpath,
@@ -487,9 +471,8 @@ static int validate_input_output(
 
     if (stat(outpath, &output_stat) == 0) {
         if (input_stat->st_dev == output_stat.st_dev &&
-            input_stat->st_ino == output_stat.st_ino) {
+            input_stat->st_ino == output_stat.st_ino)
             return -4;
-        }
     } else if (errno != ENOENT) {
         return -5;
     }
@@ -497,12 +480,6 @@ static int validate_input_output(
     return 0;
 }
 
-/*
- * Create a private temporary file in the destination directory.
- *
- * mkstemp() creates the file exclusively with mode 0600, avoiding the
- * predictable-path/symlink issue of "<output>.tmp".
- */
 static int create_temp_output(
     const char *outpath,
     char **tmp_path_out,
@@ -517,9 +494,7 @@ static int create_temp_output(
         return -1;
 
     gchar *template = g_build_filename(
-        dir,
-        ".kambos-tmp-XXXXXX",
-        NULL);
+        dir, ".kambos-tmp-XXXXXX", NULL);
 
     g_free(dir);
 
@@ -555,11 +530,6 @@ static int create_temp_output(
     return 0;
 }
 
-/*
- * Flush and close the temporary file before publishing it.
- * On any failure, remove the temporary file and leave the destination
- * unchanged.
- */
 static int publish_temp_output(
     FILE *f,
     const char *tmp_path,
@@ -615,7 +585,6 @@ static int perform_encrypt(
     memset(tag, 0, sizeof(tag));
 
     struct stat st;
-
     int path_rc = validate_input_output(inpath, outpath, &st);
 
     if (path_rc != 0)
@@ -645,8 +614,7 @@ static int perform_encrypt(
     }
 
     if (!valid_original_name(
-            (const unsigned char *)basename,
-            name_len)) {
+            (const unsigned char *)basename, name_len)) {
         g_free(basename);
         rc = -114;
         goto cleanup;
@@ -683,33 +651,21 @@ static int perform_encrypt(
 
     uint32_t name_len_be = htonl((uint32_t)name_len);
 
-    memcpy(
-        header + RINN_OFF_NAME_LEN,
-        &name_len_be,
-        sizeof(name_len_be));
+    memcpy(header + RINN_OFF_NAME_LEN,
+           &name_len_be, sizeof(name_len_be));
 
-    memcpy(
-        header + RINN_OFF_NAME,
-        basename,
-        name_len);
-
+    memcpy(header + RINN_OFF_NAME, basename, name_len);
     g_free(basename);
 
-    unsigned char salt[SALT_LEN];
-    unsigned char nonce[NONCE_LEN];
-
-    memcpy(salt, header + RINN_OFF_SALT, SALT_LEN);
-    memcpy(nonce, header + RINN_OFF_NONCE, NONCE_LEN);
-
-    if (derive_key(password, salt, ops, mem, key) != 0) {
-        sodium_memzero(salt, sizeof(salt));
-        sodium_memzero(nonce, sizeof(nonce));
+    if (derive_key(
+            password,
+            header + RINN_OFF_SALT,
+            ops,
+            mem,
+            key) != 0) {
         rc = -117;
         goto cleanup;
     }
-
-    sodium_memzero(salt, sizeof(salt));
-    sodium_memzero(nonce, sizeof(nonce));
 
     int temp_rc = create_temp_output(outpath, &tmp_path, &fout);
 
@@ -731,30 +687,19 @@ static int perform_encrypt(
     }
 
     if (EVP_EncryptInit_ex(
-            ctx,
-            EVP_aes_256_gcm(),
-            NULL,
-            NULL,
-            NULL) != 1) {
+            ctx, EVP_aes_256_gcm(), NULL, NULL, NULL) != 1) {
         rc = -126;
         goto cleanup;
     }
 
     if (EVP_CIPHER_CTX_ctrl(
-            ctx,
-            EVP_CTRL_GCM_SET_IVLEN,
-            NONCE_LEN,
-            NULL) != 1) {
+            ctx, EVP_CTRL_GCM_SET_IVLEN, NONCE_LEN, NULL) != 1) {
         rc = -127;
         goto cleanup;
     }
 
     if (EVP_EncryptInit_ex(
-            ctx,
-            NULL,
-            NULL,
-            key,
-            header + RINN_OFF_NONCE) != 1) {
+            ctx, NULL, NULL, key, header + RINN_OFF_NONCE) != 1) {
         rc = -128;
         goto cleanup;
     }
@@ -763,11 +708,7 @@ static int perform_encrypt(
 
     /* Authenticate every header byte, including the filename. */
     if (EVP_EncryptUpdate(
-            ctx,
-            NULL,
-            &outlen,
-            header,
-            (int)header_len) != 1) {
+            ctx, NULL, &outlen, header, (int)header_len) != 1) {
         rc = -129;
         goto cleanup;
     }
@@ -779,19 +720,14 @@ static int perform_encrypt(
             int produced = 0;
 
             if (EVP_EncryptUpdate(
-                    ctx,
-                    outbuf,
-                    &produced,
-                    inbuf,
-                    (int)nread) != 1) {
+                    ctx, outbuf, &produced,
+                    inbuf, (int)nread) != 1) {
                 rc = -130;
                 goto cleanup;
             }
 
             if (file_write_all(
-                    fout,
-                    outbuf,
-                    (size_t)produced) != 0) {
+                    fout, outbuf, (size_t)produced) != 0) {
                 rc = -131;
                 goto cleanup;
             }
@@ -823,10 +759,7 @@ static int perform_encrypt(
     }
 
     if (EVP_CIPHER_CTX_ctrl(
-            ctx,
-            EVP_CTRL_GCM_GET_TAG,
-            TAG_LEN,
-            tag) != 1) {
+            ctx, EVP_CTRL_GCM_GET_TAG, TAG_LEN, tag) != 1) {
         rc = -135;
         goto cleanup;
     }
@@ -848,9 +781,7 @@ static int perform_encrypt(
     fout = NULL;
 
     if (publish_temp_output(
-            finished_output,
-            tmp_path,
-            outpath) != 0) {
+            finished_output, tmp_path, outpath) != 0) {
         rc = -138;
         goto cleanup;
     }
@@ -911,7 +842,6 @@ static int perform_decrypt(
     memset(tag, 0, sizeof(tag));
 
     struct stat input_stat;
-
     int path_rc = validate_input_output(inpath, outpath, &input_stat);
 
     if (path_rc != 0)
@@ -935,7 +865,6 @@ static int perform_decrypt(
     }
 
     RinnHeader h;
-
     int header_rc = read_rinn_header(fin, &h);
 
     if (header_rc != 0) {
@@ -959,12 +888,7 @@ static int perform_decrypt(
         goto cleanup;
     }
 
-    if (derive_key(
-            password,
-            h.salt,
-            h.ops,
-            h.mem,
-            key) != 0) {
+    if (derive_key(password, h.salt, h.ops, h.mem, key) != 0) {
         free_rinn_header(&h);
         rc = -232;
         goto cleanup;
@@ -987,32 +911,21 @@ static int perform_decrypt(
     }
 
     if (EVP_DecryptInit_ex(
-            ctx,
-            EVP_aes_256_gcm(),
-            NULL,
-            NULL,
-            NULL) != 1) {
+            ctx, EVP_aes_256_gcm(), NULL, NULL, NULL) != 1) {
         free_rinn_header(&h);
         rc = -240;
         goto cleanup;
     }
 
     if (EVP_CIPHER_CTX_ctrl(
-            ctx,
-            EVP_CTRL_GCM_SET_IVLEN,
-            NONCE_LEN,
-            NULL) != 1) {
+            ctx, EVP_CTRL_GCM_SET_IVLEN, NONCE_LEN, NULL) != 1) {
         free_rinn_header(&h);
         rc = -241;
         goto cleanup;
     }
 
     if (EVP_DecryptInit_ex(
-            ctx,
-            NULL,
-            NULL,
-            key,
-            h.nonce) != 1) {
+            ctx, NULL, NULL, key, h.nonce) != 1) {
         free_rinn_header(&h);
         rc = -242;
         goto cleanup;
@@ -1020,13 +933,9 @@ static int perform_decrypt(
 
     int outlen = 0;
 
-    /* The original header bytes must be authenticated exactly as stored. */
+    /* Authenticate the exact header bytes stored in the encrypted file. */
     if (EVP_DecryptUpdate(
-            ctx,
-            NULL,
-            &outlen,
-            h.bytes,
-            (int)h.len) != 1) {
+            ctx, NULL, &outlen, h.bytes, (int)h.len) != 1) {
         free_rinn_header(&h);
         rc = -243;
         goto cleanup;
@@ -1051,29 +960,21 @@ static int perform_decrypt(
         int produced = 0;
 
         if (EVP_DecryptUpdate(
-                ctx,
-                outbuf,
-                &produced,
-                inbuf,
-                (int)nread) != 1) {
+                ctx, outbuf, &produced, inbuf, (int)nread) != 1) {
             rc = -245;
             goto cleanup;
         }
 
         /*
-         * These bytes are provisional until GCM authentication succeeds.
+         * These bytes remain provisional until authentication succeeds.
          * They are written only to a private temporary file.
          */
-        if (file_write_all(
-                fout,
-                outbuf,
-                (size_t)produced) != 0) {
+        if (file_write_all(fout, outbuf, (size_t)produced) != 0) {
             rc = -246;
             goto cleanup;
         }
 
         sodium_memzero(outbuf, sizeof(outbuf));
-
         remaining -= (uint64_t)nread;
     }
 
@@ -1083,20 +984,14 @@ static int perform_decrypt(
     }
 
     if (EVP_CIPHER_CTX_ctrl(
-            ctx,
-            EVP_CTRL_GCM_SET_TAG,
-            TAG_LEN,
-            tag) != 1) {
+            ctx, EVP_CTRL_GCM_SET_TAG, TAG_LEN, tag) != 1) {
         rc = -248;
         goto cleanup;
     }
 
     int final_len = 0;
 
-    /*
-     * This is the decisive integrity check. On failure, the temporary
-     * file is deleted and is never renamed to the requested destination.
-     */
+    /* This is the decisive integrity check. */
     if (EVP_DecryptFinal_ex(ctx, outbuf, &final_len) != 1) {
         rc = -249;
         goto cleanup;
@@ -1119,9 +1014,7 @@ static int perform_decrypt(
     fout = NULL;
 
     if (publish_temp_output(
-            finished_output,
-            tmp_path,
-            outpath) != 0) {
+            finished_output, tmp_path, outpath) != 0) {
         rc = -252;
         goto cleanup;
     }
@@ -1153,7 +1046,7 @@ cleanup:
 }
 
 /* -----------------------------------------------------------
- * GTK helpers
+ * GTK dialogs
  * ----------------------------------------------------------- */
 
 static gboolean confirm_overwrite(
@@ -1174,10 +1067,8 @@ static gboolean confirm_overwrite(
         "_Overwrite", GTK_RESPONSE_ACCEPT,
         NULL);
 
-    gboolean ok = FALSE;
-
-    if (gtk_dialog_run(GTK_DIALOG(dlg)) == GTK_RESPONSE_ACCEPT)
-        ok = TRUE;
+    gboolean ok =
+        gtk_dialog_run(GTK_DIALOG(dlg)) == GTK_RESPONSE_ACCEPT;
 
     gtk_widget_destroy(dlg);
 
@@ -1202,11 +1093,7 @@ static char *prompt_password(
     GtkWidget *label = gtk_label_new(prompt);
 
     gtk_box_pack_start(
-        GTK_BOX(content),
-        label,
-        FALSE,
-        FALSE,
-        6);
+        GTK_BOX(content), label, FALSE, FALSE, 6);
 
     GtkWidget *entry = gtk_entry_new();
 
@@ -1215,11 +1102,7 @@ static char *prompt_password(
     gtk_entry_set_activates_default(GTK_ENTRY(entry), TRUE);
 
     gtk_box_pack_start(
-        GTK_BOX(content),
-        entry,
-        FALSE,
-        FALSE,
-        6);
+        GTK_BOX(content), entry, FALSE, FALSE, 6);
 
     gtk_dialog_set_default_response(GTK_DIALOG(dlg), GTK_RESPONSE_OK);
     gtk_widget_show_all(dlg);
@@ -1233,12 +1116,7 @@ static char *prompt_password(
             result = strdup(pw);
     }
 
-    /*
-     * Clear the entry before destroying the dialog. This reduces the
-     * time the password remains in the GTK entry buffer.
-     */
     gtk_entry_set_text(GTK_ENTRY(entry), "");
-
     gtk_widget_destroy(dlg);
 
     return result;
@@ -1259,7 +1137,6 @@ static DetectKind detect_file(
     *magic_matches = 0;
 
     unsigned char buf[RINN_MAGIC_LEN];
-
     ssize_t r = read_magic_bytes(path, buf, RINN_MAGIC_LEN);
 
     if (r >= 1)
@@ -1296,7 +1173,6 @@ static DetectKind detect_file(
         }
 
         gboolean is_rinn = g_strcmp0(fmt->ext, ".rinn") == 0;
-
         g_free(ext);
 
         return is_rinn ? DET_RINN_EXT : DET_OTHER_ENC;
@@ -1318,13 +1194,8 @@ static void update_detection_ui(AppWidgets *w)
         gtk_label_set_text(GTK_LABEL(w->det_desc), "");
         gtk_label_set_text(GTK_LABEL(w->det_magic), "");
 
-        gtk_button_set_label(
-            GTK_BUTTON(w->action_button),
-            "Unknown");
-
-        gtk_label_set_text(
-            GTK_LABEL(w->status_label),
-            "Select a file.");
+        gtk_button_set_label(GTK_BUTTON(w->action_button), "Unknown");
+        gtk_label_set_text(GTK_LABEL(w->status_label), "Select a file.");
 
         return;
     }
@@ -1334,10 +1205,7 @@ static void update_detection_ui(AppWidgets *w)
     int magic_matches = 0;
 
     DetectKind kind = detect_file(
-        w->current_path,
-        &fmt,
-        &magic_exists,
-        &magic_matches);
+        w->current_path, &fmt, &magic_exists, &magic_matches);
 
     if (kind == DET_RINN_MAGIC || kind == DET_RINN_EXT) {
         gtk_label_set_markup(
@@ -1345,13 +1213,11 @@ static void update_detection_ui(AppWidgets *w)
             "<b>Encrypted file detected. Format: .RINN</b>");
 
         gtk_label_set_text(
-            GTK_LABEL(w->det_desc),
-            "KAMBOS Encrypted File");
+            GTK_LABEL(w->det_desc), "KAMBOS Encrypted File");
 
         if (magic_matches) {
             gtk_label_set_text(
-                GTK_LABEL(w->det_magic),
-                "Magic Header: RINN0711");
+                GTK_LABEL(w->det_magic), "Magic Header: RINN0711");
         } else if (!magic_exists) {
             gtk_label_set_markup(
                 GTK_LABEL(w->det_magic),
@@ -1363,20 +1229,16 @@ static void update_detection_ui(AppWidgets *w)
         }
 
         gtk_button_set_label(
-            GTK_BUTTON(w->action_button),
-            "Decrypt File");
+            GTK_BUTTON(w->action_button), "Decrypt File");
 
     } else if (kind == DET_OTHER_ENC && fmt) {
         char buf[512];
 
         g_snprintf(
-            buf,
-            sizeof(buf),
-            "Encrypted file detected. Format: %s",
-            fmt->ext);
+            buf, sizeof(buf),
+            "Encrypted file detected. Format: %s", fmt->ext);
 
         gtk_label_set_text(GTK_LABEL(w->det_title), buf);
-
         gtk_label_set_text(
             GTK_LABEL(w->det_desc),
             fmt->desc ? fmt->desc : "(Unknown)");
@@ -1387,9 +1249,7 @@ static void update_detection_ui(AppWidgets *w)
                 ? "Magic Header: (present)"
                 : "Magic Header: (none)");
 
-        gtk_button_set_label(
-            GTK_BUTTON(w->action_button),
-            "Unknown");
+        gtk_button_set_label(GTK_BUTTON(w->action_button), "Unknown");
 
     } else if (kind == DET_RANSOM) {
         char *ext = get_lower_ext(w->current_path);
@@ -1402,17 +1262,13 @@ static void update_detection_ui(AppWidgets *w)
             GTK_LABEL(w->det_title),
             "Warning: suspicious file extension");
 
-        gtk_label_set_text(
-            GTK_LABEL(w->det_desc),
-            message);
+        gtk_label_set_text(GTK_LABEL(w->det_desc), message);
 
         gtk_label_set_text(
             GTK_LABEL(w->det_magic),
             "An extension alone cannot confirm ransomware.");
 
-        gtk_button_set_label(
-            GTK_BUTTON(w->action_button),
-            "Unknown");
+        gtk_button_set_label(GTK_BUTTON(w->action_button), "Unknown");
 
         g_free(message);
         g_free(ext);
@@ -1425,18 +1281,12 @@ static void update_detection_ui(AppWidgets *w)
         char *ext = get_lower_ext(w->current_path);
 
         char *message = g_strdup_printf(
-            "File extension: %s",
-            ext ? ext : "(none)");
+            "File extension: %s", ext ? ext : "(none)");
 
-        gtk_label_set_text(
-            GTK_LABEL(w->det_desc),
-            message);
-
+        gtk_label_set_text(GTK_LABEL(w->det_desc), message);
         gtk_label_set_text(GTK_LABEL(w->det_magic), "");
 
-        gtk_button_set_label(
-            GTK_BUTTON(w->action_button),
-            "Encrypt File");
+        gtk_button_set_label(GTK_BUTTON(w->action_button), "Encrypt File");
 
         g_free(message);
         g_free(ext);
@@ -1479,9 +1329,7 @@ static void on_action_button_clicked(
 
     if (!w->current_path) {
         gtk_label_set_text(
-            GTK_LABEL(w->status_label),
-            "No file selected.");
-
+            GTK_LABEL(w->status_label), "No file selected.");
         return;
     }
 
@@ -1490,15 +1338,12 @@ static void on_action_button_clicked(
     int magic_matches = 0;
 
     DetectKind kind = detect_file(
-        w->current_path,
-        &fmt,
-        &magic_exists,
-        &magic_matches);
+        w->current_path, &fmt, &magic_exists, &magic_matches);
 
     gchar *input_dir = g_path_get_dirname(w->current_path);
 
     gboolean decrypting =
-        (kind == DET_RINN_MAGIC || kind == DET_RINN_EXT);
+        kind == DET_RINN_MAGIC || kind == DET_RINN_EXT;
 
     GtkWidget *dlg = gtk_file_chooser_dialog_new(
         decrypting ? "Save Decrypted File" : "Save Encrypted File",
@@ -1509,43 +1354,35 @@ static void on_action_button_clicked(
         NULL);
 
     gtk_file_chooser_set_current_folder(
-        GTK_FILE_CHOOSER(dlg),
-        input_dir);
+        GTK_FILE_CHOOSER(dlg), input_dir);
 
     gtk_file_chooser_set_do_overwrite_confirmation(
-        GTK_FILE_CHOOSER(dlg),
-        FALSE);
+        GTK_FILE_CHOOSER(dlg), FALSE);
 
     if (decrypting) {
         char *orig = read_rinn_original_basename(w->current_path);
 
         if (orig) {
             gtk_file_chooser_set_current_name(
-                GTK_FILE_CHOOSER(dlg),
-                orig);
-
+                GTK_FILE_CHOOSER(dlg), orig);
             free(orig);
         } else {
             char *bn = g_path_get_basename(w->current_path);
             size_t len = strlen(bn);
 
-            if (len > 5 &&
-                strcmp(bn + len - 5, ".rinn") == 0) {
+            if (len > 5 && strcmp(bn + len - 5, ".rinn") == 0) {
                 char *def = g_strndup(bn, len - 5);
-
                 gtk_file_chooser_set_current_name(
-                    GTK_FILE_CHOOSER(dlg),
-                    def);
-
+                    GTK_FILE_CHOOSER(dlg), def);
                 g_free(def);
             } else {
                 gtk_file_chooser_set_current_name(
-                    GTK_FILE_CHOOSER(dlg),
-                    bn);
+                    GTK_FILE_CHOOSER(dlg), bn);
             }
 
             g_free(bn);
         }
+
     } else {
         char *bn = g_path_get_basename(w->current_path);
 
@@ -1556,13 +1393,8 @@ static void on_action_button_clicked(
         }
 
         /*
-         * Remove the final extension, preserving filenames that begin with a dot and have no other extension.
-         *
-         * Examples:
-         *   sample.txt    -> sample.rinn
-         *   photo.jpg     -> photo.rinn
-         *   archive.tar.gz -> archive.tar.rinn
-         *   .document     -> .document.rinn
+         * Remove the final extension, preserving filenames that begin
+         * with a dot and have no other extension.
          */
         char *dot = strrchr(bn, '.');
 
@@ -1572,8 +1404,7 @@ static void on_action_button_clicked(
         char *suggest = g_strdup_printf("%s.rinn", bn);
 
         gtk_file_chooser_set_current_name(
-            GTK_FILE_CHOOSER(dlg),
-            suggest);
+            GTK_FILE_CHOOSER(dlg), suggest);
 
         g_free(suggest);
         g_free(bn);
@@ -1625,22 +1456,17 @@ static void on_action_button_clicked(
         GTK_LABEL(w->status_label),
         decrypting ? "Decrypting..." : "Encrypting...");
 
-    gtk_progress_bar_set_fraction(
-        GTK_PROGRESS_BAR(w->progress),
-        0.0);
+    gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(w->progress), 0.0);
 
     /*
-     * This implementation processes files synchronously on the GTK
-     * thread. The progress bar therefore reflects completion, not
-     * incremental progress. Background jobs can be added separately.
+     * Processing remains synchronous on the GTK thread. The progress
+     * bar reflects completion, not incremental progress.
      */
     int rc = decrypting
         ? perform_decrypt(w->current_path, dest, pw)
         : perform_encrypt(w->current_path, dest, pw);
 
-    gtk_progress_bar_set_fraction(
-        GTK_PROGRESS_BAR(w->progress),
-        1.0);
+    gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(w->progress), 1.0);
 
     if (rc == 0) {
         gtk_label_set_text(
@@ -1652,15 +1478,12 @@ static void on_action_button_clicked(
         char message[256];
 
         g_snprintf(
-            message,
-            sizeof(message),
+            message, sizeof(message),
             "%s failed (error %d). No output was published on authentication failure.",
             decrypting ? "Decryption" : "Encryption",
             rc);
 
-        gtk_label_set_text(
-            GTK_LABEL(w->status_label),
-            message);
+        gtk_label_set_text(GTK_LABEL(w->status_label), message);
     }
 
     sodium_memzero(pw, strlen(pw));
@@ -1695,250 +1518,587 @@ static void determine_exe_dir(char *buf, size_t buflen)
 }
 
 /* -----------------------------------------------------------
- * Main
+ * Custom SVG frame
  * ----------------------------------------------------------- */
 
-int main(int argc, char **argv)
+/*
+ * The SVG is a visual frame, not a native window decoration.
+ * The drawing area scales it to the window allocation.
+ */
+static gboolean draw_app_frame(
+    GtkWidget *widget,
+    cairo_t *cr,
+    gpointer user_data)
 {
+    (void)widget;
+
+    AppWidgets *w = user_data;
+
+    if (!w->frame_pixbuf)
+        return FALSE;
+
+    GtkAllocation allocation;
+    gtk_widget_get_allocation(widget, &allocation);
+
+    int image_width = gdk_pixbuf_get_width(w->frame_pixbuf);
+    int image_height = gdk_pixbuf_get_height(w->frame_pixbuf);
+
+    if (image_width <= 0 || image_height <= 0)
+        return FALSE;
+
+    cairo_save(cr);
+    cairo_scale(
+        cr,
+        (double)allocation.width / image_width,
+        (double)allocation.height / image_height);
+
+    gdk_cairo_set_source_pixbuf(cr, w->frame_pixbuf, 0, 0);
+    cairo_paint(cr);
+    cairo_restore(cr);
+
+    return FALSE;
+}
+
+static gboolean
+on_window_delete(GtkWidget *widget,
+                 GdkEvent *event,
+                 gpointer user_data)
+{
+    (void)widget;
+    (void)event;
+    (void)user_data;
+
+    return FALSE;
+}
+
+static void
+on_minimise_clicked(GtkButton *button,
+                    gpointer user_data)
+{
+    (void)button;
+
+    AppWidgets *w = user_data;
+
+    gtk_window_iconify(GTK_WINDOW(w->window));
+}
+
+static void
+on_restore_clicked(GtkButton *button,
+                   gpointer user_data)
+{
+    (void)button;
+
+    AppWidgets *w = user_data;
+
+    if (gtk_window_is_maximized(GTK_WINDOW(w->window))) {
+        gtk_window_unmaximize(GTK_WINDOW(w->window));
+    } else {
+        gtk_window_set_default_size(
+            GTK_WINDOW(w->window), 1280, 800);
+        gtk_window_unmaximize(GTK_WINDOW(w->window));
+    }
+}
+
+static void
+on_maximise_clicked(GtkButton *button,
+                    gpointer user_data)
+{
+    (void)button;
+
+    AppWidgets *w = user_data;
+
+    if (gtk_window_is_maximized(GTK_WINDOW(w->window)))
+        gtk_window_unmaximize(GTK_WINDOW(w->window));
+    else
+        gtk_window_maximize(GTK_WINDOW(w->window));
+}
+
+static gboolean
+on_drag_region_button_press(GtkWidget *widget,
+                            GdkEventButton *event,
+                            gpointer user_data)
+{
+    (void)widget;
+
+    AppWidgets *w = user_data;
+
+    if (event->type == GDK_BUTTON_PRESS &&
+        event->button == GDK_BUTTON_PRIMARY) {
+        gtk_window_begin_move_drag(
+            GTK_WINDOW(w->window),
+            event->button,
+            (gint)event->x_root,
+            (gint)event->y_root,
+            event->time);
+
+        return TRUE;
+    }
+
+    return FALSE;
+}
+
+static void
+on_window_size_allocate(GtkWidget *widget,
+                        GtkAllocation *allocation,
+                        gpointer user_data)
+{
+    (void)widget;
+
+    AppWidgets *w = user_data;
+
+    GtkWidget *buttons[] = {
+        w->minimise_button,
+        w->restore_button,
+        w->maximise_button
+    };
+
     /*
-     * Preserve a file-manager argument before GTK processes its own
-     * command-line options.
+     * Scale the controls relative to the original
+     * 1280 x 800 SVG frame.
      */
-    gchar *initial_file = NULL;
+    const double sx =
+        (double)allocation->width / 1280.0;
 
-    if (argc > 1 && argv[1] && *argv[1])
-        initial_file = g_strdup(argv[1]);
+    const double sy =
+        (double)allocation->height / 800.0;
 
+    const int button_size =
+        MAX(12, (int)(26.0 * MIN(sx, sy)));
+
+    /*
+     * Preserve the original button order:
+     * Minimise, Restore, Maximise.
+     */
+    const double centres_from_right[] = {
+        110.0, 70.0, 30.0
+    };
+
+    const int y =
+        MAX(0, (int)(27.0 * sy - button_size / 2.0));
+
+    for (size_t i = 0;
+         i < G_N_ELEMENTS(buttons);
+         ++i) {
+        if (!buttons[i])
+            continue;
+
+        const int right_margin = MAX(
+            0,
+            (int)(centres_from_right[i] * sx
+                  - button_size / 2.0));
+
+        gtk_widget_set_size_request(
+            buttons[i],
+            button_size,
+            button_size);
+
+        gtk_widget_set_margin_end(
+            buttons[i],
+            right_margin);
+
+        gtk_widget_set_margin_top(
+            buttons[i],
+            y);
+    }
+}
+
+static GtkWidget *
+make_window_control(const char *tooltip,
+                    GCallback callback,
+                    AppWidgets *w)
+{
+    GtkWidget *button = gtk_button_new();
+
+    gtk_widget_set_tooltip_text(button, tooltip);
+    gtk_widget_set_can_focus(button, FALSE);
+    gtk_widget_set_halign(button, GTK_ALIGN_START);
+    gtk_widget_set_valign(button, GTK_ALIGN_START);
+
+    g_signal_connect(button, "clicked", callback, w);
+
+    gtk_widget_set_name(button, "kambos-window-control");
+
+    return button;
+}
+
+static void
+load_frame_image(AppWidgets *w)
+{
+    gchar *local_path = g_build_filename(
+        w->exe_dir, "kambos-app.svg", NULL);
+
+    GError *error = NULL;
+
+    w->frame_pixbuf = gdk_pixbuf_new_from_file(
+        local_path, &error);
+
+    if (error) {
+        g_warning(
+            "Could not load frame image '%s': %s",
+            local_path, error->message);
+        g_error_free(error);
+        error = NULL;
+    }
+
+    g_free(local_path);
+
+    if (w->frame_pixbuf)
+        return;
+
+    w->frame_pixbuf = gdk_pixbuf_new_from_file(
+        "/usr/share/kambos/kambos-app.svg", &error);
+
+    if (error) {
+        g_warning(
+            "Could not load installed frame image: %s",
+            error->message);
+        g_error_free(error);
+    }
+}
+
+static void
+set_application_css(void)
+{
+    static const char css[] =
+        "window.kambos-window {"
+        "  background-color: transparent;"
+        "  color: #eeeeee;"
+        "}"
+        "#kambos-content {"
+        "  background-color: rgba(20, 20, 20, 0.94);"
+        "  color: #eeeeee;"
+        "  border-radius: 5px;"
+        "  padding: 18px;"
+        "}"
+        "#kambos-content label {"
+        "  color: #eeeeee;"
+        "}"
+        "#kambos-content button,"
+        "#kambos-content filechooserbutton {"
+        "  padding: 7px 12px;"
+        "}"
+        "#kambos-window-control {"
+        "  background: transparent;"
+        "  background-image: none;"
+        "  border: none;"
+        "  box-shadow: none;"
+        "  padding: 0;"
+        "  margin: 0;"
+        "}"
+        "#kambos-window-control:hover {"
+        "  background-color: rgba(255, 255, 255, 0.16);"
+        "  border-radius: 50%;"
+        "}";
+
+    GtkCssProvider *provider = gtk_css_provider_new();
+
+    GError *error = NULL;
+
+    if (!gtk_css_provider_load_from_data(
+            provider, css, -1, &error)) {
+        g_warning(
+            "Could not load application CSS: %s",
+            error->message);
+        g_error_free(error);
+    }
+
+    GdkScreen *screen = gdk_screen_get_default();
+
+    if (screen) {
+        gtk_style_context_add_provider_for_screen(
+            screen,
+            GTK_STYLE_PROVIDER(provider),
+            GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+    }
+
+    g_object_unref(provider);
+}
+
+static void
+on_information_clicked(GtkButton *button,
+                       gpointer user_data)
+{
+    (void)button;
+
+    AppWidgets *w = user_data;
+
+    GtkWidget *dialog = gtk_message_dialog_new(
+        GTK_WINDOW(w->window),
+        GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+        GTK_MESSAGE_INFO,
+        GTK_BUTTONS_CLOSE,
+        "KAMBOS File Encryptor");
+
+    gtk_message_dialog_format_secondary_text(
+        GTK_MESSAGE_DIALOG(dialog),
+        "KAMBOS uses Argon2id for password-based key derivation "
+        "and AES-256-GCM for authenticated encryption.\n\n"
+        "RINN version 2 authenticates its header, including the "
+        "original filename. The filename itself is stored in "
+        "plaintext metadata and is therefore visible in the "
+        "encrypted file.\n\n"
+        "Keep your password safe. KAMBOS cannot recover a "
+        "forgotten password.");
+
+    gtk_dialog_run(GTK_DIALOG(dialog));
+    gtk_widget_destroy(dialog);
+}
+
+static void
+on_window_destroy(GtkWidget *widget,
+                  gpointer user_data)
+{
+    (void)widget;
+
+    AppWidgets *w = user_data;
+
+    g_clear_object(&w->frame_pixbuf);
+    g_clear_pointer(&w->current_path, g_free);
+
+    sodium_memzero(w->exe_dir, sizeof(w->exe_dir));
+
+    g_free(w);
+}
+
+int
+main(int argc, char **argv)
+{
     if (sodium_init() < 0) {
-        fprintf(stderr, "libsodium initialisation failed\n");
-        g_free(initial_file);
-        return 1;
+        fprintf(stderr, "Error: libsodium initialisation failed.\n");
+        return EXIT_FAILURE;
     }
 
     gtk_init(&argc, &argv);
 
     AppWidgets *w = g_new0(AppWidgets, 1);
 
-    w->current_path = NULL;
-    w->exe_dir[0] = '\0';
+    if (!w)
+        return EXIT_FAILURE;
 
     determine_exe_dir(w->exe_dir, sizeof(w->exe_dir));
+    load_frame_image(w);
+    set_application_css();
+
+    if (!w->frame_pixbuf) {
+        GtkWidget *dialog = gtk_message_dialog_new(
+            NULL,
+            GTK_DIALOG_MODAL,
+            GTK_MESSAGE_ERROR,
+            GTK_BUTTONS_CLOSE,
+            "KAMBOS could not load its application frame.");
+
+        gtk_message_dialog_format_secondary_text(
+            GTK_MESSAGE_DIALOG(dialog),
+            "Place kambos-app.svg beside the executable or install "
+            "it at /usr/share/kambos/kambos-app.svg.");
+
+        gtk_dialog_run(GTK_DIALOG(dialog));
+        gtk_widget_destroy(dialog);
+
+        g_free(w);
+        return EXIT_FAILURE;
+    }
 
     w->window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
 
-    gtk_window_set_title(
-        GTK_WINDOW(w->window),
-        "KAMBOS File Encryptor");
+    gtk_window_set_title(GTK_WINDOW(w->window), "KAMBOS");
+    gtk_window_set_default_size(GTK_WINDOW(w->window), 1280, 800);
+    gtk_window_set_position(GTK_WINDOW(w->window), GTK_WIN_POS_CENTER);
+    gtk_window_set_resizable(GTK_WINDOW(w->window), TRUE);
+    gtk_window_set_decorated(GTK_WINDOW(w->window), FALSE);
+    gtk_widget_set_name(w->window, "kambos-window");
+    gtk_style_context_add_class(
+        gtk_widget_get_style_context(w->window),
+        "kambos-window");
 
-    gtk_window_set_default_size(
-        GTK_WINDOW(w->window),
-        800,
-        380);
+    /*
+     * Keep normal window-manager behaviour available, including
+     * closing the application with Alt+F4.
+     */
+    g_signal_connect(
+        w->window, "delete-event",
+        G_CALLBACK(on_window_delete), w);
 
     g_signal_connect(
-        w->window,
-        "destroy",
-        G_CALLBACK(gtk_main_quit),
-        NULL);
+        w->window, "destroy",
+        G_CALLBACK(on_window_destroy), w);
 
-    gtk_window_set_resizable(GTK_WINDOW(w->window), FALSE);
+    w->overlay = gtk_overlay_new();
+    gtk_container_add(GTK_CONTAINER(w->window), w->overlay);
 
-    /* Window icon: system installation, then executable directory. */
-    if (g_file_test(
-            "/usr/share/icons/kambos_256x256.png",
-            G_FILE_TEST_EXISTS)) {
-        GError *err = NULL;
-
-        gtk_window_set_icon_from_file(
-            GTK_WINDOW(w->window),
-            "/usr/share/icons/kambos_256x256.png",
-            &err);
-
-        if (err)
-            g_clear_error(&err);
-    } else if (w->exe_dir[0]) {
-        char *icon_path = g_build_filename(
-            w->exe_dir,
-            "kambos_256x256.png",
-            NULL);
-
-        if (icon_path &&
-            g_file_test(icon_path, G_FILE_TEST_EXISTS)) {
-            GError *err = NULL;
-
-            gtk_window_set_icon_from_file(
-                GTK_WINDOW(w->window),
-                icon_path,
-                &err);
-
-            if (err)
-                g_clear_error(&err);
-        }
-
-        g_free(icon_path);
-    }
-
-    GtkWidget *grid = gtk_grid_new();
-
-    gtk_grid_set_row_spacing(GTK_GRID(grid), 8);
-    gtk_grid_set_column_spacing(GTK_GRID(grid), 8);
-
-    gtk_container_set_border_width(
-        GTK_CONTAINER(grid),
-        12);
+    w->frame_area = gtk_drawing_area_new();
+    gtk_widget_set_hexpand(w->frame_area, TRUE);
+    gtk_widget_set_vexpand(w->frame_area, TRUE);
 
     gtk_container_add(
-        GTK_CONTAINER(w->window),
-        grid);
+        GTK_CONTAINER(w->overlay), w->frame_area);
 
-    /* Logo frame. */
-    GtkWidget *logo_frame = gtk_frame_new(NULL);
+    g_signal_connect(
+        w->frame_area, "draw",
+        G_CALLBACK(draw_app_frame), w);
 
-    gtk_widget_set_size_request(logo_frame, 256, 256);
+    gtk_widget_add_events(
+        w->frame_area,
+        GDK_BUTTON_PRESS_MASK);
 
-    gtk_grid_attach(
-        GTK_GRID(grid),
-        logo_frame,
-        0, 0, 1, 4);
+    g_signal_connect(
+        w->frame_area, "button-press-event",
+        G_CALLBACK(on_drag_region_button_press), w);
 
-    GtkWidget *logo_box = gtk_box_new(
-        GTK_ORIENTATION_VERTICAL,
-        0);
+    g_signal_connect(
+        w->window, "size-allocate",
+        G_CALLBACK(on_window_size_allocate), w);
 
-    gtk_container_add(
-        GTK_CONTAINER(logo_frame),
-        logo_box);
+    /*
+     * The central content sits inside the visual SVG frame.
+     * The SVG is not a native window decoration.
+     */
+    w->content_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+    gtk_widget_set_name(w->content_box, "kambos-content");
+    gtk_widget_set_halign(w->content_box, GTK_ALIGN_CENTER);
+    gtk_widget_set_valign(w->content_box, GTK_ALIGN_CENTER);
+    gtk_widget_set_size_request(w->content_box, 640, 420);
 
-    w->logo_image = NULL;
+    gtk_overlay_add_overlay(
+        GTK_OVERLAY(w->overlay), w->content_box);
 
-    if (g_file_test(
-            "/usr/share/kambos/kambos_256x256.png",
-            G_FILE_TEST_EXISTS)) {
-        w->logo_image = gtk_image_new_from_file(
-            "/usr/share/kambos/kambos_256x256.png");
-    } else if (w->exe_dir[0]) {
-        char *logo_path = g_build_filename(
-            w->exe_dir,
-            "kambos_256x256.png",
-            NULL);
+    GtkWidget *title = gtk_label_new(NULL);
+    gtk_label_set_markup(
+        GTK_LABEL(title),
+        "<span size='xx-large' weight='bold'>Encrypt / Decrypt</span>");
+    gtk_box_pack_start(
+        GTK_BOX(w->content_box), title, FALSE, FALSE, 6);
 
-        if (logo_path &&
-            g_file_test(logo_path, G_FILE_TEST_EXISTS)) {
-            w->logo_image = gtk_image_new_from_file(logo_path);
-        }
+    GtkWidget *description = gtk_label_new(
+        "Select a file to inspect it or perform a KAMBOS operation.");
+    gtk_label_set_line_wrap(GTK_LABEL(description), TRUE);
+    gtk_box_pack_start(
+        GTK_BOX(w->content_box), description, FALSE, FALSE, 2);
 
-        g_free(logo_path);
-    }
-
-    if (w->logo_image) {
-        gtk_box_pack_start(
-            GTK_BOX(logo_box),
-            w->logo_image,
-            TRUE,
-            TRUE,
-            0);
-    } else {
-        GtkWidget *lbl = gtk_label_new("KAMBOS");
-
-        gtk_box_pack_start(
-            GTK_BOX(logo_box),
-            lbl,
-            TRUE,
-            TRUE,
-            0);
-    }
-
-    /* File chooser. */
     w->file_button = gtk_file_chooser_button_new(
-        "Select File",
+        "Select a file",
         GTK_FILE_CHOOSER_ACTION_OPEN);
 
-    gtk_grid_attach(
-        GTK_GRID(grid),
-        w->file_button,
-        1, 0, 2, 1);
+    gtk_box_pack_start(
+        GTK_BOX(w->content_box), w->file_button,
+        FALSE, FALSE, 4);
 
-    /* Action button. */
+    w->det_title = gtk_label_new("");
+    gtk_label_set_line_wrap(GTK_LABEL(w->det_title), TRUE);
+    gtk_box_pack_start(
+        GTK_BOX(w->content_box), w->det_title,
+        FALSE, FALSE, 2);
+
+    w->det_desc = gtk_label_new("");
+    gtk_label_set_line_wrap(GTK_LABEL(w->det_desc), TRUE);
+    gtk_box_pack_start(
+        GTK_BOX(w->content_box), w->det_desc,
+        FALSE, FALSE, 2);
+
+    w->det_magic = gtk_label_new("");
+    gtk_label_set_line_wrap(GTK_LABEL(w->det_magic), TRUE);
+    gtk_box_pack_start(
+        GTK_BOX(w->content_box), w->det_magic,
+        FALSE, FALSE, 2);
+
     w->action_button = gtk_button_new_with_label("Unknown");
+    gtk_widget_set_halign(w->action_button, GTK_ALIGN_CENTER);
+    gtk_widget_set_size_request(w->action_button, 180, 42);
 
-    gtk_grid_attach(
-        GTK_GRID(grid),
-        w->action_button,
-        1, 1, 1, 1);
+    gtk_box_pack_start(
+        GTK_BOX(w->content_box), w->action_button,
+        FALSE, FALSE, 6);
 
-    /* Progress bar. */
     w->progress = gtk_progress_bar_new();
+    gtk_progress_bar_set_show_text(
+        GTK_PROGRESS_BAR(w->progress), FALSE);
 
-    gtk_widget_set_size_request(w->progress, -1, 20);
+    gtk_box_pack_start(
+        GTK_BOX(w->content_box), w->progress,
+        FALSE, FALSE, 2);
 
-    gtk_grid_attach(
-        GTK_GRID(grid),
-        w->progress,
-        2, 1, 1, 1);
-
-    /* Status label. */
     w->status_label = gtk_label_new("Select a file.");
+    gtk_label_set_line_wrap(GTK_LABEL(w->status_label), TRUE);
 
-    gtk_grid_attach(
-        GTK_GRID(grid),
-        w->status_label,
-        1, 2, 2, 1);
+    gtk_box_pack_start(
+        GTK_BOX(w->content_box), w->status_label,
+        FALSE, FALSE, 2);
 
-    /* Detection labels. */
-    w->det_title = gtk_label_new(NULL);
+    GtkWidget *information_button =
+        gtk_button_new_with_label("Information");
 
-    gtk_grid_attach(
-        GTK_GRID(grid),
-        w->det_title,
-        1, 3, 2, 1);
+    gtk_widget_set_halign(
+        information_button, GTK_ALIGN_CENTER);
 
-    w->det_desc = gtk_label_new(NULL);
-
-    gtk_grid_attach(
-        GTK_GRID(grid),
-        w->det_desc,
-        1, 4, 2, 1);
-
-    w->det_magic = gtk_label_new(NULL);
-
-    gtk_grid_attach(
-        GTK_GRID(grid),
-        w->det_magic,
-        1, 5, 2, 1);
-
-    /* Signals. */
-    g_signal_connect(
-        w->file_button,
-        "file-set",
-        G_CALLBACK(on_file_chooser_changed),
-        w);
+    gtk_box_pack_start(
+        GTK_BOX(w->content_box), information_button,
+        FALSE, FALSE, 2);
 
     g_signal_connect(
-        w->action_button,
-        "clicked",
-        G_CALLBACK(on_action_button_clicked),
-        w);
+        w->file_button, "file-set",
+        G_CALLBACK(on_file_chooser_changed), w);
 
+    g_signal_connect(
+        w->action_button, "clicked",
+        G_CALLBACK(on_action_button_clicked), w);
+
+    g_signal_connect(
+        information_button, "clicked",
+        G_CALLBACK(on_information_clicked), w);
+
+    /*
+     * Transparent button hit areas sit over the three circles
+     * drawn into kambos-app.svg.
+     *
+     * Window controls are individual overlay widgets.
+     * Avoid a full-window GtkFixed overlay, which can
+     * intercept clicks intended for the central controls.
+     */
+     
+    w->minimise_button = make_window_control(
+        "Minimise",
+        G_CALLBACK(on_minimise_clicked), w);
+
+    w->restore_button = make_window_control(
+        "Restore window",
+        G_CALLBACK(on_restore_clicked), w);
+
+    w->maximise_button = make_window_control(
+        "Maximise",
+        G_CALLBACK(on_maximise_clicked), w);
+
+    GtkWidget *window_buttons[] = {
+        w->minimise_button,
+        w->restore_button,
+        w->maximise_button
+    };
+
+    for (size_t i = 0;
+         i < G_N_ELEMENTS(window_buttons);
+         ++i) {
+        gtk_widget_set_halign(
+            window_buttons[i], GTK_ALIGN_END);
+
+        gtk_widget_set_valign(
+            window_buttons[i], GTK_ALIGN_START);
+
+        gtk_overlay_add_overlay(
+            GTK_OVERLAY(w->overlay),
+            window_buttons[i]);
+    }
+
+    /*
+     * The SVG has no close button. Alt+F4 or the desktop session's
+     * window controls can still close the application.
+     */
     gtk_widget_show_all(w->window);
 
-    /* Open a file passed through the desktop entry's %f argument. */
-    if (initial_file) {
-        if (gtk_file_chooser_set_filename(
-                GTK_FILE_CHOOSER(w->file_button),
-                initial_file)) {
-            g_free(w->current_path);
-            w->current_path = g_strdup(initial_file);
-            update_detection_ui(w);
-        }
+    on_window_size_allocate(
+        w->window, &(GtkAllocation){0, 0, 1280, 800}, w);
 
-        g_free(initial_file);
-        initial_file = NULL;
-    }
+    update_detection_ui(w);
 
     gtk_main();
 
-    g_free(w->current_path);
-    g_free(w);
-
-    return 0;
+    return EXIT_SUCCESS;
 }
