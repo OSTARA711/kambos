@@ -48,6 +48,8 @@
 #include <sodium.h>
 #include <openssl/evp.h>
 
+#include "splash/splash.h"
+
 /* -----------------------------------------------------------
  * RINN format and cryptographic constants
  * ----------------------------------------------------------- */
@@ -1724,18 +1726,28 @@ make_window_control(const char *tooltip,
 static void
 load_frame_image(AppWidgets *w)
 {
+    /*
+     * Development path:
+     * images/kambos-app.svg beside the executable.
+     */
     gchar *local_path = g_build_filename(
-        w->exe_dir, "kambos-app.svg", NULL);
+        w->exe_dir,
+        "images",
+        "kambos-app.svg",
+        NULL);
 
     GError *error = NULL;
 
     w->frame_pixbuf = gdk_pixbuf_new_from_file(
-        local_path, &error);
+        local_path,
+        &error);
 
     if (error) {
         g_warning(
             "Could not load frame image '%s': %s",
-            local_path, error->message);
+            local_path,
+            error->message);
+
         g_error_free(error);
         error = NULL;
     }
@@ -1745,63 +1757,83 @@ load_frame_image(AppWidgets *w)
     if (w->frame_pixbuf)
         return;
 
+    /*
+     * Installed path:
+     * /usr/share/kambos/images/kambos-app.svg.
+     */
+    gchar *installed_path = g_build_filename(
+        "/usr/share/kambos",
+        "images",
+        "kambos-app.svg",
+        NULL);
+
     w->frame_pixbuf = gdk_pixbuf_new_from_file(
-        "/usr/share/kambos/kambos-app.svg", &error);
+        installed_path,
+        &error);
 
     if (error) {
         g_warning(
-            "Could not load installed frame image: %s",
+            "Could not load installed frame image '%s': %s",
+            installed_path,
             error->message);
+
         g_error_free(error);
     }
+
+    g_free(installed_path);
 }
 
 static void
-set_application_css(void)
+set_application_css(const AppWidgets *w)
 {
-    static const char css[] =
-        "window.kambos-window {"
-        "  background-color: transparent;"
-        "  color: #eeeeee;"
-        "}"
-        "#kambos-content {"
-        "  background-color: rgba(20, 20, 20, 0.94);"
-        "  color: #eeeeee;"
-        "  border-radius: 5px;"
-        "  padding: 18px;"
-        "}"
-        "#kambos-content label {"
-        "  color: #eeeeee;"
-        "}"
-        "#kambos-content button,"
-        "#kambos-content filechooserbutton {"
-        "  padding: 7px 12px;"
-        "}"
-        "#kambos-window-control {"
-        "  background: transparent;"
-        "  background-image: none;"
-        "  border: none;"
-        "  box-shadow: none;"
-        "  padding: 0;"
-        "  margin: 0;"
-        "}"
-        "#kambos-window-control:hover {"
-        "  background-color: rgba(255, 255, 255, 0.16);"
-        "  border-radius: 50%;"
-        "}";
-
     GtkCssProvider *provider = gtk_css_provider_new();
-
     GError *error = NULL;
 
-    if (!gtk_css_provider_load_from_data(
-            provider, css, -1, &error)) {
-        g_warning(
-            "Could not load application CSS: %s",
-            error->message);
-        g_error_free(error);
+    /*
+     * Load the stylesheet from the development directory,
+     * relative to the executable.
+     */
+    gchar *css_path = g_build_filename(
+        w->exe_dir,
+        "css",
+        "style.css",
+        NULL);
+
+    gboolean loaded = gtk_css_provider_load_from_path(
+        provider,
+        css_path,
+        &error);
+
+    g_free(css_path);
+
+    /*
+     * Fall back to the system installation directory.
+     */
+    if (!loaded) {
+        g_clear_error(&error);
+
+        loaded = gtk_css_provider_load_from_path(
+            provider,
+            "/usr/share/kambos/css/style.css",
+            &error);
     }
 
+    /*
+     * Report an error if neither stylesheet could be loaded.
+     */
+    if (!loaded) {
+        g_warning(
+            "Could not load application CSS: %s",
+            error ? error->message : "Unknown error");
+
+        g_clear_error(&error);
+        g_object_unref(provider);
+        return;
+    }
+
+    /*
+     * Apply the stylesheet to the default screen.
+     */
     GdkScreen *screen = gdk_screen_get_default();
 
     if (screen) {
@@ -1827,7 +1859,7 @@ on_information_clicked(GtkButton *button,
         GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
         GTK_MESSAGE_INFO,
         GTK_BUTTONS_CLOSE,
-        "KAMBOS File Encryptor");
+        "KAMBOS");
 
     gtk_message_dialog_format_secondary_text(
         GTK_MESSAGE_DIALOG(dialog),
@@ -1877,7 +1909,7 @@ main(int argc, char **argv)
 
     determine_exe_dir(w->exe_dir, sizeof(w->exe_dir));
     load_frame_image(w);
-    set_application_css();
+    set_application_css(w);
 
     if (!w->frame_pixbuf) {
         GtkWidget *dialog = gtk_message_dialog_new(
@@ -2090,15 +2122,20 @@ main(int argc, char **argv)
     /*
      * The SVG has no close button. Alt+F4 or the desktop session's
      * window controls can still close the application.
+     *
+     * Show the splash screen before presenting the main window.
      */
-    gtk_widget_show_all(w->window);
 
-    on_window_size_allocate(
-        w->window, &(GtkAllocation){0, 0, 1280, 800}, w);
+     on_window_size_allocate(
+         w->window, &(GtkAllocation){0, 0, 1280, 800}, w);
 
-    update_detection_ui(w);
+     update_detection_ui(w);
 
-    gtk_main();
+     kambos_splash_show(
+         w->window,
+         w->exe_dir);
+
+     gtk_main();
 
     return EXIT_SUCCESS;
 }
