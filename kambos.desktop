@@ -2,8 +2,8 @@
 Type=Application
 Version=1.0
 Name=KAMBOS Workstation Vault
-GenericName=Encrypted Messaging & AES-256-GCM File Encryptor Vault
-Comment=File Encryption Using Argon2id Key Derivation and AES-256-GCM Authenticated Encryption
+GenericName=AES-256-GCM File Encryptor Vault
+Comment=Argon2id Key Derivation and AES-256-GCM Authenticated Encryption
 Exec=/usr/bin/kambos %f
 Icon=kambos
 Terminal=false
