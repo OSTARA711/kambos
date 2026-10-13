@@ -1,13 +1,13 @@
 [Desktop Entry]
 Type=Application
 Version=1.0
-Name=KAMBOS Messaging App
-GenericName=AES-256-GCM File Encryptor
+Name=KAMBOS Workstation Vault
+GenericName=Encrypted Messaging & AES-256-GCM File Encryptor Vault
 Comment=File Encryption Using Argon2id Key Derivation and AES-256-GCM Authenticated Encryption
 Exec=/usr/bin/kambos %f
 Icon=kambos
 Terminal=false
-Categories=Utility;Security;GTK;
+Categories=Network;InstantMessaging;Utility;Security;GTK;
 StartupNotify=true
 MimeType=application/x-rinn-encrypted;
-Keywords=Encryption;Security;Argon2id;Key Derivation;AES-256-GCM;File;GTK;
+Keywords=Encryption;Security;Argon2id;Key Derivation;AES-256-GCM;File;GTK;Vault;Mail;Messaging;Chat;
