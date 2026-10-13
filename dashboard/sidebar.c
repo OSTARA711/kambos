@@ -278,7 +278,7 @@ set_active_internal(SidebarState *state,
         GtkStyleContext *context =
             gtk_widget_get_style_context(button);
 
-        if (i == section) {
+        if (i == (gint)section) {
             gtk_style_context_add_class(
                 context, "kambos-sidebar-active");
         } else {
@@ -288,8 +288,9 @@ set_active_internal(SidebarState *state,
 
         gtk_widget_set_state_flags(
             button,
-            i == section ? GTK_STATE_FLAG_CHECKED
-                         : GTK_STATE_FLAG_NORMAL,
+            i == (gint)section
+                ? GTK_STATE_FLAG_CHECKED
+                : GTK_STATE_FLAG_NORMAL,
             TRUE);
     }
 }

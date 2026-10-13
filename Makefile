@@ -6,8 +6,12 @@ PKG_CONFIG ?= pkg-config
 CFLAGS ?= -O2
 CFLAGS += -Wall -Wextra
 
+CPPFLAGS ?=
+LDFLAGS ?=
+
 GTK_CFLAGS := $(shell $(PKG_CONFIG) --cflags gtk+-3.0)
 GTK_LIBS := $(shell $(PKG_CONFIG) --libs gtk+-3.0)
+
 LDLIBS += $(GTK_LIBS) -lsodium -lssl -lcrypto -pthread
 
 PREFIX ?= /usr
@@ -35,13 +39,11 @@ check-deps:
 	@$(PKG_CONFIG) --exists gtk+-3.0 || { echo "Error: GTK3 development files are missing."; exit 1; }
 	@$(PKG_CONFIG) --exists libsodium openssl || { echo "Error: libsodium or OpenSSL development files are missing."; exit 1; }
 
-# Compile the application and its separate splash-screen module.
-$(TARGET): kambos.c splash/splash.c splash/splash.h | check-deps
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(GTK_CFLAGS) \
-		-o $@ kambos.c splash/splash.c \
-		$(LDFLAGS) $(LDLIBS)
+# Compile the application, splash screen, and dashboard sidebar modules.
+$(TARGET): kambos.c splash/splash.c splash/splash.h dashboard/sidebar.c dashboard/sidebar.h | check-deps
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(GTK_CFLAGS) -o $@ kambos.c splash/splash.c dashboard/sidebar.c $(LDFLAGS) $(LDLIBS)
 
-# Install the application, stylesheet, runtime images, and desktop entry.
+# Install the application and desktop entry.
 install: $(TARGET) install-icons install-data
 	install -Dm755 $(TARGET) "$(DESTDIR)$(BINDIR)/$(TARGET)"
 	install -Dm644 kambos.desktop "$(DESTDIR)$(DESKTOPDIR)/kambos.desktop"

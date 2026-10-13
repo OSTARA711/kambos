@@ -49,6 +49,7 @@
 #include <openssl/evp.h>
 
 #include "splash/splash.h"
+#include "dashboard/sidebar.h"
 
 /* -----------------------------------------------------------
  * RINN format and cryptographic constants
@@ -102,6 +103,12 @@ typedef struct {
     GtkWidget *overlay;
     GtkWidget *frame_area;
     GtkWidget *content_box;
+    GtkWidget *dashboard_box;
+    GtkWidget *sidebar;
+    GtkWidget *section_area;
+    GtkWidget *section_placeholder;
+    GtkWidget *section_placeholder_title;
+    GtkWidget *section_placeholder_desc;
     GtkWidget *drag_region;
 
     GtkWidget *file_button;
@@ -548,13 +555,24 @@ static int publish_temp_output(
     if (fclose(f) != 0)
         failed = 1;
 
-    if (!failed && rename(tmp_path, outpath) != 0)
+    /*
+     * link() fails if outpath already exists, preventing
+     * accidental overwriting of an existing destination.
+     */
+    if (!failed && link(tmp_path, outpath) != 0)
         failed = 1;
 
     if (failed) {
         unlink(tmp_path);
         return -1;
     }
+
+    /*
+     * The output has been published successfully.
+     * Remove the temporary filename.
+     */
+    if (unlink(tmp_path) != 0)
+        return -1;
 
     return 0;
 }
@@ -599,6 +617,15 @@ static int perform_encrypt(
 
     if (!fin)
         return -111;
+        
+    struct stat opened_stat;
+
+    if (fstat(fileno(fin), &opened_stat) != 0 ||
+        !S_ISREG(opened_stat.st_mode) ||
+        opened_stat.st_size < 0) {
+        rc = -112;
+        goto cleanup;
+    }
 
     gchar *basename = g_path_get_basename(inpath);
 
@@ -791,6 +818,7 @@ static int perform_encrypt(
     rc = 0;
 
 cleanup:
+
     if (fin)
         fclose(fin);
 
@@ -1024,6 +1052,7 @@ static int perform_decrypt(
     rc = 0;
 
 cleanup:
+
     if (fin)
         fclose(fin);
 
@@ -1468,7 +1497,7 @@ static void on_action_button_clicked(
         ? perform_decrypt(w->current_path, dest, pw)
         : perform_encrypt(w->current_path, dest, pw);
 
-    gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(w->progress), 1.0);
+    gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(w->progress), rc == 0 ? 1.0 : 0.0);
 
     if (rc == 0) {
         gtk_label_set_text(
@@ -1481,7 +1510,7 @@ static void on_action_button_clicked(
 
         g_snprintf(
             message, sizeof(message),
-            "%s failed (error %d). No output was published on authentication failure.",
+            "%s failed (error %d).",
             decrypting ? "Decryption" : "Encryption",
             rc);
 
@@ -1591,6 +1620,7 @@ on_restore_clicked(GtkButton *button,
     (void)button;
 
     AppWidgets *w = user_data;
+
 
     if (gtk_window_is_maximized(GTK_WINDOW(w->window))) {
         gtk_window_unmaximize(GTK_WINDOW(w->window));
@@ -1892,6 +1922,92 @@ on_window_destroy(GtkWidget *widget,
     g_free(w);
 }
 
+
+/* -----------------------------------------------------------
+ * Dashboard section navigation
+ * ----------------------------------------------------------- */
+
+static void
+on_dashboard_section_changed(KambosSidebarSection section,
+                             gpointer user_data)
+{
+    AppWidgets *w = user_data;
+
+    if (!w || !w->content_box || !w->section_placeholder)
+        return;
+
+    const char *title = "KAMBOS";
+    const char *description =
+        "This dashboard section is being prepared.";
+
+    switch (section) {
+    case KAMBOS_SIDEBAR_CRYPTOS:
+        gtk_widget_show(w->content_box);
+        gtk_widget_hide(w->section_placeholder);
+        return;
+
+    case KAMBOS_SIDEBAR_HISTORY:
+        title = "History";
+        description =
+            "Your KAMBOS activity history will appear here.";
+        break;
+
+    case KAMBOS_SIDEBAR_KALLAS:
+        title = "Kallas";
+        description =
+            "Kallas messaging and communication tools will appear here.";
+        break;
+
+    case KAMBOS_SIDEBAR_QUARANTINE:
+        title = "Quarantine";
+        description =
+            "Files isolated for review will appear here.";
+        break;
+
+    case KAMBOS_SIDEBAR_SETTINGS:
+        title = "Settings";
+        description =
+            "Application preferences and security settings will appear here.";
+        break;
+
+    case KAMBOS_SIDEBAR_STATS:
+        title = "Stats";
+        description =
+            "KAMBOS activity and file statistics will appear here.";
+        break;
+
+    case KAMBOS_SIDEBAR_USERS:
+        title = "Users";
+        description =
+            "User and access management will appear here.";
+        break;
+
+    case KAMBOS_SIDEBAR_VAULT:
+        title = "Vault";
+        description =
+            "Your Knowledge Garden and stored files will appear here.";
+        break;
+
+    default:
+        title = "KAMBOS";
+        description =
+            "This dashboard section is not available.";
+        break;
+    }
+
+    gchar *markup = g_markup_printf_escaped(
+        "<span size='xx-large' weight='bold'>%s</span>", title);
+    gtk_label_set_markup(
+        GTK_LABEL(w->section_placeholder_title), markup);
+    g_free(markup);
+
+    gtk_label_set_text(
+        GTK_LABEL(w->section_placeholder_desc), description);
+
+    gtk_widget_hide(w->content_box);
+    gtk_widget_show_all(w->section_placeholder);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -1922,7 +2038,7 @@ main(int argc, char **argv)
         gtk_message_dialog_format_secondary_text(
             GTK_MESSAGE_DIALOG(dialog),
             "Place kambos-app.svg beside the executable or install "
-            "it at /usr/share/kambos/kambos-app.svg.");
+            "it at /usr/share/kambos/images/kambos-app.svg.");
 
         gtk_dialog_run(GTK_DIALOG(dialog));
         gtk_widget_destroy(dialog);
@@ -1982,17 +2098,107 @@ main(int argc, char **argv)
         G_CALLBACK(on_window_size_allocate), w);
 
     /*
-     * The central content sits inside the visual SVG frame.
-     * The SVG is not a native window decoration.
+     * The dashboard occupies the content area inside the SVG frame.
+     * The SVG remains a visual frame, not a native window decoration.
+     */
+    w->dashboard_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_widget_set_name(w->dashboard_box, "kambos-dashboard");
+    gtk_widget_set_hexpand(w->dashboard_box, TRUE);
+    gtk_widget_set_vexpand(w->dashboard_box, TRUE);
+    gtk_widget_set_halign(w->dashboard_box, GTK_ALIGN_FILL);
+    gtk_widget_set_valign(w->dashboard_box, GTK_ALIGN_FILL);
+
+    /*
+     * Position the sidebar near the left edge of the SVG frame,
+     * while keeping the dashboard clear of the title bar.
+     */
+    gtk_widget_set_margin_start(w->dashboard_box, 8);
+    gtk_widget_set_margin_end(w->dashboard_box, 28);
+    gtk_widget_set_margin_top(w->dashboard_box, 58);
+    gtk_widget_set_margin_bottom(w->dashboard_box, 24);
+
+    gtk_overlay_add_overlay(
+        GTK_OVERLAY(w->overlay), w->dashboard_box);
+
+    w->sidebar = kambos_sidebar_new(
+        on_dashboard_section_changed, w);
+
+    gtk_box_pack_start(
+        GTK_BOX(w->dashboard_box), w->sidebar,
+        FALSE, FALSE, 0);
+
+    w->section_area = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_widget_set_hexpand(w->section_area, TRUE);
+    gtk_widget_set_vexpand(w->section_area, TRUE);
+    gtk_widget_set_halign(w->section_area, GTK_ALIGN_FILL);
+    gtk_widget_set_valign(w->section_area, GTK_ALIGN_FILL);
+    gtk_widget_set_margin_start(w->section_area, 18);
+    gtk_widget_set_margin_end(w->section_area, 18);
+    gtk_widget_set_margin_top(w->section_area, 14);
+    gtk_widget_set_margin_bottom(w->section_area, 14);
+
+    gtk_box_pack_start(
+        GTK_BOX(w->dashboard_box), w->section_area,
+        TRUE, TRUE, 0);
+
+    /*
+     * Existing Cryptos file-encryption UI remains intact.
+     * It is displayed when Cryptos is selected in the sidebar.
      */
     w->content_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
     gtk_widget_set_name(w->content_box, "kambos-content");
-    gtk_widget_set_halign(w->content_box, GTK_ALIGN_CENTER);
-    gtk_widget_set_valign(w->content_box, GTK_ALIGN_CENTER);
+    gtk_widget_set_hexpand(w->content_box, TRUE);
+    gtk_widget_set_vexpand(w->content_box, TRUE);
+    gtk_widget_set_halign(w->content_box, GTK_ALIGN_FILL);
+    gtk_widget_set_valign(w->content_box, GTK_ALIGN_FILL);
     gtk_widget_set_size_request(w->content_box, 640, 420);
 
-    gtk_overlay_add_overlay(
-        GTK_OVERLAY(w->overlay), w->content_box);
+    gtk_box_pack_start(
+        GTK_BOX(w->section_area), w->content_box,
+        TRUE, TRUE, 0);
+
+    /*
+     * Other navigation destinations receive a placeholder until
+     * their respective features are implemented.
+     */
+    w->section_placeholder = gtk_box_new(
+        GTK_ORIENTATION_VERTICAL, 12);
+    gtk_widget_set_hexpand(w->section_placeholder, TRUE);
+    gtk_widget_set_vexpand(w->section_placeholder, TRUE);
+    gtk_widget_set_halign(
+        w->section_placeholder, GTK_ALIGN_CENTER);
+    gtk_widget_set_valign(
+        w->section_placeholder, GTK_ALIGN_CENTER);
+    gtk_widget_set_margin_start(w->section_placeholder, 24);
+    gtk_widget_set_margin_end(w->section_placeholder, 24);
+
+    w->section_placeholder_title = gtk_label_new("History");
+    gtk_label_set_markup(
+        GTK_LABEL(w->section_placeholder_title),
+        "<span size='xx-large' weight='bold'>History</span>");
+    gtk_widget_set_halign(
+        w->section_placeholder_title, GTK_ALIGN_CENTER);
+
+    w->section_placeholder_desc = gtk_label_new(
+        "Your KAMBOS activity history will appear here.");
+    gtk_label_set_line_wrap(
+        GTK_LABEL(w->section_placeholder_desc), TRUE);
+    gtk_widget_set_halign(
+        (w->section_placeholder_desc), GTK_ALIGN_CENTER);
+    gtk_label_set_justify(
+        GTK_LABEL(w->section_placeholder_desc), GTK_JUSTIFY_CENTER);
+
+    gtk_box_pack_start(
+        GTK_BOX(w->section_placeholder),
+        w->section_placeholder_title, FALSE, FALSE, 4);
+    gtk_box_pack_start(
+        GTK_BOX(w->section_placeholder),
+        w->section_placeholder_desc, FALSE, FALSE, 4);
+
+    gtk_box_pack_start(
+        GTK_BOX(w->section_area), w->section_placeholder,
+        TRUE, TRUE, 0);
+    gtk_widget_hide(w->section_placeholder);
 
     GtkWidget *title = gtk_label_new(NULL);
     gtk_label_set_markup(
