@@ -1941,7 +1941,7 @@ on_dashboard_section_changed(KambosSidebarSection section,
         "This dashboard section is being prepared.";
 
     switch (section) {
-    case KAMBOS_SIDEBAR_CRYPTOS:
+    case KAMBOS_SIDEBAR_KRYPTOS:
         gtk_widget_show(w->content_box);
         gtk_widget_hide(w->section_placeholder);
         return;
@@ -2142,8 +2142,8 @@ main(int argc, char **argv)
         TRUE, TRUE, 0);
 
     /*
-     * Existing Cryptos file-encryption UI remains intact.
-     * It is displayed when Cryptos is selected in the sidebar.
+     * Existing kryptos file-encryption UI remains intact.
+     * It is displayed when kryptos is selected in the sidebar.
      */
     w->content_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
     gtk_widget_set_name(w->content_box, "kambos-content");

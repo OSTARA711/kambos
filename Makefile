@@ -70,6 +70,15 @@ install-data:
 	install -Dm644 css/style.css "$(DESTDIR)$(CSSDIR)/style.css"
 	install -Dm644 images/kambos-app.svg "$(DESTDIR)$(IMAGEDIR)/kambos-app.svg"
 	install -Dm644 images/kambos.svg "$(DESTDIR)$(IMAGEDIR)/kambos.svg"
+	install -Dm644 images/kryptos.svg "$(DESTDIR)$(IMAGEDIR)/kryptos.svg"
+	install -Dm644 images/kallas.svg "$(DESTDIR)$(IMAGEDIR)/kallas.svg"
+	install -Dm644 images/vault.svg "$(DESTDIR)$(IMAGEDIR)/vault.svg"
+	install -Dm644 images/quarantine.svg "$(DESTDIR)$(IMAGEDIR)/quarantine.svg"
+	install -Dm644 images/history.svg "$(DESTDIR)$(IMAGEDIR)/history.svg"
+	install -Dm644 images/stats.svg "$(DESTDIR)$(IMAGEDIR)/stats.svg"
+	install -Dm644 images/users.svg "$(DESTDIR)$(IMAGEDIR)/users.svg"
+	install -Dm644 images/settings.svg "$(DESTDIR)$(IMAGEDIR)/settings.svg"
+	install -Dm644 images/shutdown.svg "$(DESTDIR)$(IMAGEDIR)/shutdown.svg"
 
 # Uninstall the application, runtime data, desktop entry, and icons.
 uninstall:
@@ -82,6 +91,15 @@ uninstall:
 	rm -f "$(DESTDIR)$(ICONDIR)/256x256/apps/$(APPICON).png"
 	rm -f "$(DESTDIR)$(ICONDIR)/128x128/apps/$(APPICON).png"
 	rm -f "$(DESTDIR)$(ICONDIR)/64x64/apps/$(APPICON).png"
+	rm -f "$(DESTDIR)$(IMAGEDIR)/kryptos.svg"
+	rm -f "$(DESTDIR)$(IMAGEDIR)/kallas.svg"
+	rm -f "$(DESTDIR)$(IMAGEDIR)/vault.svg"
+	rm -f "$(DESTDIR)$(IMAGEDIR)/quarantine.svg"
+	rm -f "$(DESTDIR)$(IMAGEDIR)/history.svg"
+	rm -f "$(DESTDIR)$(IMAGEDIR)/stats.svg"
+	rm -f "$(DESTDIR)$(IMAGEDIR)/users.svg"
+	rm -f "$(DESTDIR)$(IMAGEDIR)/settings.svg"
+	rm -f "$(DESTDIR)$(IMAGEDIR)/shutdown.svg"
 ifeq ($(DESTDIR),)
 	@if command -v gtk-update-icon-cache >/dev/null 2>&1; then \
 		gtk-update-icon-cache -f "$(ICONDIR)"; \
