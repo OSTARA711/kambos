@@ -2108,38 +2108,54 @@ main(int argc, char **argv)
     gtk_widget_set_halign(w->dashboard_box, GTK_ALIGN_FILL);
     gtk_widget_set_valign(w->dashboard_box, GTK_ALIGN_FILL);
 
-    /*
-     * Position the sidebar near the left edge of the SVG frame,
-     * while keeping the dashboard clear of the title bar.
-     */
-    gtk_widget_set_margin_start(w->dashboard_box, 8);
-    gtk_widget_set_margin_end(w->dashboard_box, 28);
-    gtk_widget_set_margin_top(w->dashboard_box, 58);
-    gtk_widget_set_margin_bottom(w->dashboard_box, 24);
 
-    gtk_overlay_add_overlay(
-        GTK_OVERLAY(w->overlay), w->dashboard_box);
+/*
+ * Keep the dashboard positioned consistently inside the SVG frame.
+ * The sidebar stays fixed at the start; only the section area expands.
+ */
+gtk_widget_set_margin_start(w->dashboard_box, 8);
+gtk_widget_set_margin_end(w->dashboard_box, 28);
+gtk_widget_set_margin_top(w->dashboard_box, 58);
+gtk_widget_set_margin_bottom(w->dashboard_box, 24);
 
-    w->sidebar = kambos_sidebar_new(
-        on_dashboard_section_changed, w);
+gtk_widget_set_hexpand(w->dashboard_box, TRUE);
+gtk_widget_set_vexpand(w->dashboard_box, TRUE);
+gtk_widget_set_halign(w->dashboard_box, GTK_ALIGN_FILL);
+gtk_widget_set_valign(w->dashboard_box, GTK_ALIGN_FILL);
 
-    gtk_box_pack_start(
-        GTK_BOX(w->dashboard_box), w->sidebar,
-        FALSE, FALSE, 0);
+gtk_overlay_add_overlay(
+    GTK_OVERLAY(w->overlay), w->dashboard_box);
 
-    w->section_area = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-    gtk_widget_set_hexpand(w->section_area, TRUE);
-    gtk_widget_set_vexpand(w->section_area, TRUE);
-    gtk_widget_set_halign(w->section_area, GTK_ALIGN_FILL);
-    gtk_widget_set_valign(w->section_area, GTK_ALIGN_FILL);
-    gtk_widget_set_margin_start(w->section_area, 18);
-    gtk_widget_set_margin_end(w->section_area, 18);
-    gtk_widget_set_margin_top(w->section_area, 14);
-    gtk_widget_set_margin_bottom(w->section_area, 14);
+w->sidebar = kambos_sidebar_new(
+    on_dashboard_section_changed, w);
 
-    gtk_box_pack_start(
-        GTK_BOX(w->dashboard_box), w->section_area,
-        TRUE, TRUE, 0);
+/*
+ * Keep the sidebar anchored to the left of the dashboard box.
+ * Prevent it from expanding when different sections are selected.
+ */
+gtk_widget_set_halign(w->sidebar, GTK_ALIGN_START);
+gtk_widget_set_valign(w->sidebar, GTK_ALIGN_FILL);
+gtk_widget_set_hexpand(w->sidebar, FALSE);
+gtk_widget_set_vexpand(w->sidebar, TRUE);
+
+gtk_box_pack_start(
+    GTK_BOX(w->dashboard_box), w->sidebar,
+    FALSE, FALSE, 0);
+
+w->section_area = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+gtk_widget_set_hexpand(w->section_area, TRUE);
+gtk_widget_set_vexpand(w->section_area, TRUE);
+gtk_widget_set_halign(w->section_area, GTK_ALIGN_FILL);
+gtk_widget_set_valign(w->section_area, GTK_ALIGN_FILL);
+gtk_widget_set_margin_start(w->section_area, 18);
+gtk_widget_set_margin_end(w->section_area, 18);
+gtk_widget_set_margin_top(w->section_area, 14);
+gtk_widget_set_margin_bottom(w->section_area, 14);
+
+gtk_box_pack_start(
+    GTK_BOX(w->dashboard_box), w->section_area,
+    TRUE, TRUE, 0);
+
 
     /*
      * Existing kryptos file-encryption UI remains intact.
