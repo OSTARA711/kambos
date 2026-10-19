@@ -112,8 +112,26 @@ static const char *icon_settings =
     "<path d='M6 9a12 12 0 1 1-1 10'/>"
     "<path d='M16 9v7l5 3'/>"
     "</g></svg>";
+    
+static const char *icon_bugs =
+    "<svg xmlns='http://www.w3.org/2000/svg' "
+    "width='32' height='32' viewBox='0 0 32 32'>"
+    "<g fill='none' stroke='#b9c2cc' stroke-width='2' "
+    "stroke-linecap='round' stroke-linejoin='round'>"
+    "<path d='M4 7h24v16H17l-7 5v-5H4z'/>"
+    "<path d='M9 12h14M9 17h9'/>"
+    "</g></svg>";
+    
+static const char *icon_news =
+    "<svg xmlns='http://www.w3.org/2000/svg' "
+    "width='32' height='32' viewBox='0 0 32 32'>"
+    "<g fill='none' stroke='#b9c2cc' stroke-width='2' "
+    "stroke-linecap='round' stroke-linejoin='round'>"
+    "<path d='M4 7h24v16H17l-7 5v-5H4z'/>"
+    "<path d='M9 12h14M9 17h9'/>"
+    "</g></svg>";
 
-static const char *icon_shutdown =
+static const char *icon_exit =
     "<svg xmlns='http://www.w3.org/2000/svg' "
     "width='32' height='32' viewBox='0 0 32 32'>"
     "<g fill='none' stroke='#b9c2cc' stroke-width='2' "
@@ -132,7 +150,9 @@ static const SidebarItem sidebar_items[] = {
     { KAMBOS_SIDEBAR_STATS,      "Stats",      NULL },
     { KAMBOS_SIDEBAR_USERS,      "Users",      NULL },
     { KAMBOS_SIDEBAR_SETTINGS,   "Settings",   NULL },
-    { KAMBOS_SIDEBAR_SHUTDOWN,   "Shutdown",   NULL }
+    { KAMBOS_SIDEBAR_BUGS,       "Bugs",       NULL },
+    { KAMBOS_SIDEBAR_NEWS,       "News",       NULL },
+    { KAMBOS_SIDEBAR_EXIT,       "Exit",       NULL }
 };
 
 static const char *
@@ -155,8 +175,12 @@ icon_for_section(KambosSidebarSection section)
         return icon_users;
     case KAMBOS_SIDEBAR_SETTINGS:
         return icon_settings;
-    case KAMBOS_SIDEBAR_SHUTDOWN:
-        return icon_shutdown;
+    case KAMBOS_SIDEBAR_BUGS:
+        return icon_bugs;
+    case KAMBOS_SIDEBAR_NEWS:
+        return icon_news;
+    case KAMBOS_SIDEBAR_EXIT:
+        return icon_exit;
     default:
         return icon_vault;
     }
@@ -495,9 +519,19 @@ kambos_sidebar_new(KambosSidebarSectionChanged callback,
             icon = create_file_icon("settings.svg", 48);
             icon_size = 48;
             break;
+            
+        case KAMBOS_SIDEBAR_BUGS:
+            icon = create_file_icon("bugs.svg", 48);
+            icon_size = 48;
+            break;
+            
+        case KAMBOS_SIDEBAR_NEWS:
+            icon = create_file_icon("news.svg", 48);
+            icon_size = 48;
+            break;
         
-        case KAMBOS_SIDEBAR_SHUTDOWN:
-            icon = create_file_icon("shutdown.svg", 48);
+        case KAMBOS_SIDEBAR_EXIT:
+            icon = create_file_icon("exit.svg", 48);
             icon_size = 48;
             break;
 

@@ -78,7 +78,9 @@ install-data:
 	install -Dm644 images/stats.svg "$(DESTDIR)$(IMAGEDIR)/stats.svg"
 	install -Dm644 images/users.svg "$(DESTDIR)$(IMAGEDIR)/users.svg"
 	install -Dm644 images/settings.svg "$(DESTDIR)$(IMAGEDIR)/settings.svg"
-	install -Dm644 images/shutdown.svg "$(DESTDIR)$(IMAGEDIR)/shutdown.svg"
+	install -Dm644 images/bugs.svg "$(DESTDIR)$(IMAGEDIR)/bugs.svg"
+	install -Dm644 images/news.svg "$(DESTDIR)$(IMAGEDIR)/news.svg"
+	install -Dm644 images/exit.svg "$(DESTDIR)$(IMAGEDIR)/exit.svg"
 
 # Uninstall the application, runtime data, desktop entry, and icons.
 uninstall:
@@ -99,7 +101,9 @@ uninstall:
 	rm -f "$(DESTDIR)$(IMAGEDIR)/stats.svg"
 	rm -f "$(DESTDIR)$(IMAGEDIR)/users.svg"
 	rm -f "$(DESTDIR)$(IMAGEDIR)/settings.svg"
-	rm -f "$(DESTDIR)$(IMAGEDIR)/shutdown.svg"
+	rm -f "$(DESTDIR)$(IMAGEDIR)/bugs.svg"
+	rm -f "$(DESTDIR)$(IMAGEDIR)/news.svg"
+	rm -f "$(DESTDIR)$(IMAGEDIR)/exit.svg"
 ifeq ($(DESTDIR),)
 	@if command -v gtk-update-icon-cache >/dev/null 2>&1; then \
 		gtk-update-icon-cache -f "$(ICONDIR)"; \
