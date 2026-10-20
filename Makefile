@@ -39,9 +39,20 @@ check-deps:
 	@$(PKG_CONFIG) --exists gtk+-3.0 || { echo "Error: GTK3 development files are missing."; exit 1; }
 	@$(PKG_CONFIG) --exists libsodium openssl || { echo "Error: libsodium or OpenSSL development files are missing."; exit 1; }
 
-# Compile the application, splash screen, and dashboard sidebar modules.
-$(TARGET): kambos.c splash/splash.c splash/splash.h dashboard/sidebar.c dashboard/sidebar.h | check-deps
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(GTK_CFLAGS) -o $@ kambos.c splash/splash.c dashboard/sidebar.c $(LDFLAGS) $(LDLIBS)
+# Compile the application, splash screen, sidebar, Settings, and Kryptos.
+$(TARGET): kambos.c \
+           splash/splash.c splash/splash.h \
+           dashboard/sidebar.c dashboard/sidebar.h \
+           dashboard/settings/settings.c dashboard/settings/settings.h \
+           dashboard/kryptos/kryptos.c dashboard/kryptos/kryptos.h \
+           | check-deps
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(GTK_CFLAGS) -o $@ \
+		kambos.c \
+		splash/splash.c \
+		dashboard/sidebar.c \
+		dashboard/settings/settings.c \
+		dashboard/kryptos/kryptos.c \
+		$(LDFLAGS) $(LDLIBS)
 
 # Install the application and desktop entry.
 install: $(TARGET) install-icons install-data
@@ -81,6 +92,10 @@ install-data:
 	install -Dm644 images/bugs.svg "$(DESTDIR)$(IMAGEDIR)/bugs.svg"
 	install -Dm644 images/news.svg "$(DESTDIR)$(IMAGEDIR)/news.svg"
 	install -Dm644 images/exit.svg "$(DESTDIR)$(IMAGEDIR)/exit.svg"
+	install -Dm644 images/incognito.svg "$(DESTDIR)$(IMAGEDIR)/incognito.svg"
+	install -Dm644 images/translator.svg "$(DESTDIR)$(IMAGEDIR)/translator.svg"
+	install -Dm644 images/hotkeys.svg "$(DESTDIR)$(IMAGEDIR)/hotkeys.svg"
+	install -Dm644 images/alien.svg "$(DESTDIR)$(IMAGEDIR)/alien.svg"
 
 # Uninstall the application, runtime data, desktop entry, and icons.
 uninstall:
@@ -104,6 +119,10 @@ uninstall:
 	rm -f "$(DESTDIR)$(IMAGEDIR)/bugs.svg"
 	rm -f "$(DESTDIR)$(IMAGEDIR)/news.svg"
 	rm -f "$(DESTDIR)$(IMAGEDIR)/exit.svg"
+	rm -f "$(DESTDIR)$(IMAGEDIR)/incognito.svg"
+	rm -f "$(DESTDIR)$(IMAGEDIR)/translator.svg"
+	rm -f "$(DESTDIR)$(IMAGEDIR)/hotkeys.svg"
+	rm -f "$(DESTDIR)$(IMAGEDIR)/alien.svg"
 ifeq ($(DESTDIR),)
 	@if command -v gtk-update-icon-cache >/dev/null 2>&1; then \
 		gtk-update-icon-cache -f "$(ICONDIR)"; \
