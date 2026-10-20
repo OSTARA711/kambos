@@ -5,9 +5,11 @@
  * GTK3 dashboard navigation sidebar.
  *
  * Features:
- *   - Eight navigation sections.
- *   - Supports external SVG files and embedded SVG icons.
+ *   - Eleven navigation sections.
+ *   - External SVG icons loaded from the images directory.
  *   - Active-section highlighting.
+ *   - Green labels on hover, keyboard focus, and active selection.
+ *   - Upright labels without unwanted text effects.
  *   - Thin grey vertical divider.
  *   - Callback for application-level navigation.
  */
@@ -15,7 +17,6 @@
 #include "sidebar.h"
 
 #include <gdk-pixbuf/gdk-pixbuf.h>
-#include <string.h>
 
 #define SIDEBAR_WIDTH 180
 #define ICON_SIZE      48
@@ -32,212 +33,26 @@ typedef struct {
 typedef struct {
     KambosSidebarSection section;
     const char *label;
-    const char *svg;
+    const char *icon_file;
 } SidebarItem;
 
-/* Embedded SVG icons retained for entries not yet replaced. */
-
-static const char *icon_kryptos =
-    "<svg xmlns='http://www.w3.org/2000/svg' "
-    "width='32' height='32' viewBox='0 0 32 32'>"
-    "<g fill='none' stroke='#b9c2cc' stroke-width='2' "
-    "stroke-linecap='round' stroke-linejoin='round'>"
-    "<path d='M4 7h24v16H17l-7 5v-5H4z'/>"
-    "<path d='M9 12h14M9 17h9'/>"
-    "</g></svg>";
-    
-static const char *icon_kallas =
-    "<svg xmlns='http://www.w3.org/2000/svg' "
-    "width='32' height='32' viewBox='0 0 32 32'>"
-    "<g fill='none' stroke='#b9c2cc' stroke-width='2' "
-    "stroke-linecap='round' stroke-linejoin='round'>"
-    "<path d='M5 10V4M5 10h6'/>"
-    "<path d='M6 9a12 12 0 1 1-1 10'/>"
-    "<path d='M16 9v7l5 3'/>"
-    "</g></svg>";
-    
-static const char *icon_vault =
-    "<svg xmlns='http://www.w3.org/2000/svg' "
-    "width='32' height='32' viewBox='0 0 32 32'>"
-    "<g fill='none' stroke='#b9c2cc' stroke-width='2' "
-    "stroke-linecap='round' stroke-linejoin='round'>"
-    "<path d='M4 7h24v16H17l-7 5v-5H4z'/>"
-    "<path d='M9 12h14M9 17h9'/>"
-    "</g></svg>";
-    
-static const char *icon_quarantine =
-    "<svg xmlns='http://www.w3.org/2000/svg' "
-    "width='32' height='32' viewBox='0 0 32 32'>"
-    "<g fill='none' stroke='#b9c2cc' stroke-width='2' "
-    "stroke-linecap='round' stroke-linejoin='round'>"
-    "<path d='M5 10V4M5 10h6'/>"
-    "<path d='M6 9a12 12 0 1 1-1 10'/>"
-    "<path d='M16 9v7l5 3'/>"
-    "</g></svg>";
-
-static const char *icon_history =
-    "<svg xmlns='http://www.w3.org/2000/svg' "
-    "width='32' height='32' viewBox='0 0 32 32'>"
-    "<g fill='none' stroke='#b9c2cc' stroke-width='2' "
-    "stroke-linecap='round' stroke-linejoin='round'>"
-    "<path d='M4 7h24v16H17l-7 5v-5H4z'/>"
-    "<path d='M9 12h14M9 17h9'/>"
-    "</g></svg>";
-    
-static const char *icon_stats =
-    "<svg xmlns='http://www.w3.org/2000/svg' "
-    "width='32' height='32' viewBox='0 0 32 32'>"
-    "<g fill='none' stroke='#b9c2cc' stroke-width='2' "
-    "stroke-linecap='round' stroke-linejoin='round'>"
-    "<path d='M5 10V4M5 10h6'/>"
-    "<path d='M6 9a12 12 0 1 1-1 10'/>"
-    "<path d='M16 9v7l5 3'/>"
-    "</g></svg>";
-
-static const char *icon_users =
-    "<svg xmlns='http://www.w3.org/2000/svg' "
-    "width='32' height='32' viewBox='0 0 32 32'>"
-    "<g fill='none' stroke='#b9c2cc' stroke-width='2' "
-    "stroke-linecap='round' stroke-linejoin='round'>"
-    "<path d='M4 7h24v16H17l-7 5v-5H4z'/>"
-    "<path d='M9 12h14M9 17h9'/>"
-    "</g></svg>";
-    
-static const char *icon_settings =
-    "<svg xmlns='http://www.w3.org/2000/svg' "
-    "width='32' height='32' viewBox='0 0 32 32'>"
-    "<g fill='none' stroke='#b9c2cc' stroke-width='2' "
-    "stroke-linecap='round' stroke-linejoin='round'>"
-    "<path d='M5 10V4M5 10h6'/>"
-    "<path d='M6 9a12 12 0 1 1-1 10'/>"
-    "<path d='M16 9v7l5 3'/>"
-    "</g></svg>";
-    
-static const char *icon_bugs =
-    "<svg xmlns='http://www.w3.org/2000/svg' "
-    "width='32' height='32' viewBox='0 0 32 32'>"
-    "<g fill='none' stroke='#b9c2cc' stroke-width='2' "
-    "stroke-linecap='round' stroke-linejoin='round'>"
-    "<path d='M4 7h24v16H17l-7 5v-5H4z'/>"
-    "<path d='M9 12h14M9 17h9'/>"
-    "</g></svg>";
-    
-static const char *icon_news =
-    "<svg xmlns='http://www.w3.org/2000/svg' "
-    "width='32' height='32' viewBox='0 0 32 32'>"
-    "<g fill='none' stroke='#b9c2cc' stroke-width='2' "
-    "stroke-linecap='round' stroke-linejoin='round'>"
-    "<path d='M4 7h24v16H17l-7 5v-5H4z'/>"
-    "<path d='M9 12h14M9 17h9'/>"
-    "</g></svg>";
-
-static const char *icon_exit =
-    "<svg xmlns='http://www.w3.org/2000/svg' "
-    "width='32' height='32' viewBox='0 0 32 32'>"
-    "<g fill='none' stroke='#b9c2cc' stroke-width='2' "
-    "stroke-linecap='round' stroke-linejoin='round'>"
-    "<path d='M4 7h24v16H17l-7 5v-5H4z'/>"
-    "<path d='M9 12h14M9 17h9'/>"
-    "</g></svg>";
-    
-
 static const SidebarItem sidebar_items[] = {
-    { KAMBOS_SIDEBAR_KRYPTOS,    "Kryptos",    NULL },
-    { KAMBOS_SIDEBAR_KALLAS,     "Kallas",     NULL },
-    { KAMBOS_SIDEBAR_VAULT,      "Vault",      NULL },
-    { KAMBOS_SIDEBAR_QUARANTINE, "Quarantine", NULL },
-    { KAMBOS_SIDEBAR_HISTORY,    "History",    NULL },
-    { KAMBOS_SIDEBAR_STATS,      "Stats",      NULL },
-    { KAMBOS_SIDEBAR_USERS,      "Users",      NULL },
-    { KAMBOS_SIDEBAR_SETTINGS,   "Settings",   NULL },
-    { KAMBOS_SIDEBAR_BUGS,       "Bugs",       NULL },
-    { KAMBOS_SIDEBAR_NEWS,       "News",       NULL },
-    { KAMBOS_SIDEBAR_EXIT,       "Exit",       NULL }
+    { KAMBOS_SIDEBAR_KRYPTOS,    "Kryptos",    "kryptos.svg" },
+    { KAMBOS_SIDEBAR_KALLAS,     "Kallas",     "kallas.svg" },
+    { KAMBOS_SIDEBAR_VAULT,      "Vault",      "vault.svg" },
+    { KAMBOS_SIDEBAR_QUARANTINE, "Quarantine", "quarantine.svg" },
+    { KAMBOS_SIDEBAR_HISTORY,    "History",    "history.svg" },
+    { KAMBOS_SIDEBAR_STATS,      "Stats",      "stats.svg" },
+    { KAMBOS_SIDEBAR_USERS,      "Users",      "users.svg" },
+    { KAMBOS_SIDEBAR_SETTINGS,   "Settings",   "settings.svg" },
+    { KAMBOS_SIDEBAR_BUGS,       "Bugs",       "bugs.svg" },
+    { KAMBOS_SIDEBAR_NEWS,       "News",       "news.svg" },
+    { KAMBOS_SIDEBAR_EXIT,       "Exit",       "exit.svg" }
 };
-
-static const char *
-icon_for_section(KambosSidebarSection section)
-{
-    switch (section) {
-    case KAMBOS_SIDEBAR_KRYPTOS:
-        return icon_kryptos;
-    case KAMBOS_SIDEBAR_KALLAS:
-        return icon_kallas;
-    case KAMBOS_SIDEBAR_VAULT:
-        return icon_vault;
-    case KAMBOS_SIDEBAR_QUARANTINE:
-        return icon_quarantine;
-    case KAMBOS_SIDEBAR_HISTORY:
-        return icon_history;
-    case KAMBOS_SIDEBAR_STATS:
-        return icon_stats;
-    case KAMBOS_SIDEBAR_USERS:
-        return icon_users;
-    case KAMBOS_SIDEBAR_SETTINGS:
-        return icon_settings;
-    case KAMBOS_SIDEBAR_BUGS:
-        return icon_bugs;
-    case KAMBOS_SIDEBAR_NEWS:
-        return icon_news;
-    case KAMBOS_SIDEBAR_EXIT:
-        return icon_exit;
-    default:
-        return icon_vault;
-    }
-}
-
-/* Convert an embedded SVG string into a GTK image. */
-static GtkWidget *
-create_svg_icon(const char *svg)
-{
-    GError *error = NULL;
-    GdkPixbufLoader *loader =
-        gdk_pixbuf_loader_new_with_type("svg", &error);
-
-    if (!loader) {
-        g_clear_error(&error);
-        return gtk_image_new_from_icon_name(
-            "image-missing", GTK_ICON_SIZE_LARGE_TOOLBAR);
-    }
-
-    gsize length = strlen(svg);
-    gboolean written = gdk_pixbuf_loader_write(
-        loader, (const guchar *)svg, length, &error);
-
-    if (!written) {
-        g_clear_error(&error);
-        g_object_unref(loader);
-        return gtk_image_new_from_icon_name(
-            "image-missing", GTK_ICON_SIZE_LARGE_TOOLBAR);
-    }
-
-    if (!gdk_pixbuf_loader_close(loader, &error)) {
-        g_clear_error(&error);
-        g_object_unref(loader);
-        return gtk_image_new_from_icon_name(
-            "image-missing", GTK_ICON_SIZE_LARGE_TOOLBAR);
-    }
-
-    GdkPixbuf *pixbuf = gdk_pixbuf_loader_get_pixbuf(loader);
-    GtkWidget *image;
-
-    if (pixbuf) {
-        g_object_ref(pixbuf);
-        image = gtk_image_new_from_pixbuf(pixbuf);
-        g_object_unref(pixbuf);
-        gtk_image_set_pixel_size(GTK_IMAGE(image), ICON_SIZE);
-    } else {
-        image = gtk_image_new_from_icon_name(
-            "image-missing", GTK_ICON_SIZE_LARGE_TOOLBAR);
-    }
-
-    g_object_unref(loader);
-    return image;
-}
 
 /*
  * Load an SVG image from the development images directory,
- * falling back to the default installed images directory.
+ * falling back to the installed images directory.
  */
 static GtkWidget *
 create_file_icon(const char *filename, gint size)
@@ -299,28 +114,63 @@ install_sidebar_css(void)
         ".kambos-sidebar {"
         "  padding: 12px 8px;"
         "}"
+
         ".kambos-sidebar-button {"
         "  min-height: 42px;"
         "  padding: 5px 8px;"
         "  border: 1px solid transparent;"
         "  border-radius: 5px;"
         "  background: transparent;"
+        "  background-image: none;"
         "  color: #d2d6dc;"
         "  box-shadow: none;"
+        "  text-shadow: none;"
         "}"
+
+        ".kambos-sidebar-button,"
+        ".kambos-sidebar-button .kambos-sidebar-label {"
+        "  font-style: normal;"
+        "  text-shadow: none;"
+        "}"
+
         ".kambos-sidebar-button:hover {"
         "  background: rgba(190, 200, 210, 0.10);"
         "  border-color: rgba(190, 200, 210, 0.14);"
         "}"
-        ".kambos-sidebar-button:checked,"
-        ".kambos-sidebar-button.kambos-sidebar-active {"
+
+        ".kambos-sidebar-button:hover .kambos-sidebar-label,"
+        ".kambos-sidebar-button:focus .kambos-sidebar-label {"
+        "  color: #00ff66;"
+        "}"
+
+        ".kambos-sidebar-button.kambos-sidebar-active,"
+        ".kambos-sidebar-button:checked {"
         "  background: rgba(110, 160, 170, 0.20);"
         "  border-color: rgba(125, 180, 190, 0.40);"
-        "  color: #ffffff;"
         "}"
+
+        ".kambos-sidebar-button.kambos-sidebar-active "
+        ".kambos-sidebar-label,"
+        ".kambos-sidebar-button:checked "
         ".kambos-sidebar-label {"
-        "  color: inherit;"
+        "  color: #00ff66;"
         "}"
+
+        ".kambos-sidebar-button.kambos-sidebar-active:hover "
+        ".kambos-sidebar-label,"
+        ".kambos-sidebar-button.kambos-sidebar-active:focus "
+        ".kambos-sidebar-label,"
+        ".kambos-sidebar-button:checked:hover "
+        ".kambos-sidebar-label,"
+        ".kambos-sidebar-button:checked:focus "
+        ".kambos-sidebar-label {"
+        "  color: #00ff66;"
+        "}"
+
+        ".kambos-sidebar-button label {"
+        "  text-shadow: none;"
+        "}"
+
         ".kambos-sidebar-divider {"
         "  background-color: #555a61;"
         "  min-width: 1px;"
@@ -328,14 +178,20 @@ install_sidebar_css(void)
         "}";
 
     GtkCssProvider *provider = gtk_css_provider_new();
+    GError *error = NULL;
 
     if (gtk_css_provider_load_from_data(
-            provider, css, -1, NULL)) {
+            provider, css, -1, &error)) {
         gtk_style_context_add_provider_for_screen(
             screen,
             GTK_STYLE_PROVIDER(provider),
             GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+
         installed = TRUE;
+    } else {
+        g_warning("Unable to load sidebar CSS: %s",
+                  error ? error->message : "unknown error");
+        g_clear_error(&error);
     }
 
     g_object_unref(provider);
@@ -473,76 +329,15 @@ kambos_sidebar_new(KambosSidebarSectionChanged callback,
         gtk_widget_set_halign(row, GTK_ALIGN_FILL);
 
         /*
-         * External icons can be replaced independently.
-         * Entries without external files retain embedded SVGs.
+         * All sidebar icons are external SVG files.
+         * No embedded SVG definitions or conversion function
+         * are needed.
          */
-        GtkWidget *icon;
-        gint icon_size = ICON_SIZE;
-
-        switch (item->section) {
-        case KAMBOS_SIDEBAR_KRYPTOS:
-            icon = create_file_icon("kryptos.svg", 48);
-            icon_size = 48;
-            break;
-        
-        case KAMBOS_SIDEBAR_KALLAS:
-            icon = create_file_icon("kallas.svg", 48);
-            icon_size = 48;
-            break;
-        
-        case KAMBOS_SIDEBAR_VAULT:
-            icon = create_file_icon("vault.svg", 48);
-            icon_size = 48;
-            break;
-        
-        case KAMBOS_SIDEBAR_QUARANTINE:
-            icon = create_file_icon("quarantine.svg", 48);
-            icon_size = 48;
-            break;
-        
-        case KAMBOS_SIDEBAR_HISTORY:
-            icon = create_file_icon("history.svg", 48);
-            icon_size = 48;
-            break;
-
-        case KAMBOS_SIDEBAR_STATS:
-            icon = create_file_icon("stats.svg", 48);
-            icon_size = 48;
-            break;
-            
-        case KAMBOS_SIDEBAR_USERS:
-            icon = create_file_icon("users.svg", 48);
-            icon_size = 48;
-            break;
-        
-        case KAMBOS_SIDEBAR_SETTINGS:
-            icon = create_file_icon("settings.svg", 48);
-            icon_size = 48;
-            break;
-            
-        case KAMBOS_SIDEBAR_BUGS:
-            icon = create_file_icon("bugs.svg", 48);
-            icon_size = 48;
-            break;
-            
-        case KAMBOS_SIDEBAR_NEWS:
-            icon = create_file_icon("news.svg", 48);
-            icon_size = 48;
-            break;
-        
-        case KAMBOS_SIDEBAR_EXIT:
-            icon = create_file_icon("exit.svg", 48);
-            icon_size = 48;
-            break;
-
-        default:
-            icon = create_svg_icon(
-                icon_for_section(item->section));
-            break;
-        }
+        GtkWidget *icon = create_file_icon(
+            item->icon_file, ICON_SIZE);
 
         gtk_widget_set_size_request(
-            icon, icon_size, icon_size);
+            icon, ICON_SIZE, ICON_SIZE);
         gtk_widget_set_valign(icon, GTK_ALIGN_CENTER);
 
         GtkWidget *label = gtk_label_new(item->label);

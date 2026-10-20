@@ -1,5 +1,8 @@
 /*
- * KAMBOS GTK3 application stylesheet
+ * File: css/style.css
+ * Project: KAMBOS Workstation Vault
+ *
+ * GTK3 application stylesheet.
  */
 
 /* Main application window */
@@ -48,6 +51,59 @@ window.kambos-window {
 #kambos-content filechooserbutton {
     color: #eeeeee;
     padding: 7px 12px;
+}
+
+/*
+ * Dashboard sidebar
+ *
+ * Keep labels upright, remove unwanted theme effects,
+ * and highlight navigation labels in green when hovered,
+ * keyboard-focused, or active.
+ */
+.kambos-sidebar-button {
+    background-image: none;
+    box-shadow: none;
+    text-shadow: none;
+}
+
+.kambos-sidebar-button,
+.kambos-sidebar-button .kambos-sidebar-label {
+    font-style: normal;
+    text-shadow: none;
+}
+
+/* Default sidebar label colour */
+.kambos-sidebar-button .kambos-sidebar-label {
+    color: #d2d6dc;
+}
+
+/* Green text when the pointer hovers over a sidebar item */
+.kambos-sidebar-button:hover .kambos-sidebar-label {
+    color: #00ff66;
+}
+
+/* Green text when a sidebar item receives keyboard focus */
+.kambos-sidebar-button:focus .kambos-sidebar-label {
+    color: #00ff66;
+}
+
+/* Green text for the currently active sidebar item */
+.kambos-sidebar-button.kambos-sidebar-active .kambos-sidebar-label,
+.kambos-sidebar-button:checked .kambos-sidebar-label {
+    color: #00ff66;
+}
+
+/* Preserve green text for active items while hovered or focused */
+.kambos-sidebar-button.kambos-sidebar-active:hover .kambos-sidebar-label,
+.kambos-sidebar-button.kambos-sidebar-active:focus .kambos-sidebar-label,
+.kambos-sidebar-button:checked:hover .kambos-sidebar-label,
+.kambos-sidebar-button:checked:focus .kambos-sidebar-label {
+    color: #00ff66;
+}
+
+/* Prevent sidebar buttons from introducing text shadows */
+.kambos-sidebar-button label {
+    text-shadow: none;
 }
 
 /* Transparent hit areas over the SVG window controls */
