@@ -177,7 +177,7 @@ static EncFmt enc_fmts[] = {
     { ".bfa", "Blowfish Encrypted (BFA)", NULL },
     { ".locker", "Locker-style encrypted", NULL },
     { ".rem", "BlackBerry Encrypted Media", NULL },
-    { ".sec", "Secure file", NULL },
+    { ".sec", "Secure File", NULL },
     { ".edoc", "Electronically Certified Document", NULL },
     { ".sdoc", "Sealed MS Word Document", NULL },
     { NULL, NULL, NULL }
@@ -1893,14 +1893,10 @@ on_information_clicked(GtkButton *button,
 
     gtk_message_dialog_format_secondary_text(
         GTK_MESSAGE_DIALOG(dialog),
-        "KAMBOS uses Argon2id for password-based key derivation "
-        "and AES-256-GCM for authenticated encryption.\n\n"
-        "RINN version 2 authenticates its header, including the "
-        "original filename. The filename itself is stored in "
-        "plaintext metadata and is therefore visible in the "
-        "encrypted file.\n\n"
-        "Keep your password safe. KAMBOS cannot recover a "
-        "forgotten password.");
+        "Argon2id for password key derivation and AES-256-GCM for authenticated encryption.\n\n"
+        "RINN v2 authenticates its header, including the original filename. The filename itself "
+        "is stored in plaintext metadata and is therefore visible in the encrypted file.\n\n"
+        "Keep in mind your password. You cannot recover a forgotten password.");
 
     gtk_dialog_run(GTK_DIALOG(dialog));
     gtk_widget_destroy(dialog);
@@ -1945,47 +1941,59 @@ on_dashboard_section_changed(KambosSidebarSection section,
         gtk_widget_show(w->content_box);
         gtk_widget_hide(w->section_placeholder);
         return;
+        
+     case KAMBOS_SIDEBAR_KALLAS:
+        title = "Kallas";
+        description =
+            "Messaging and communication tools.";
+        break;
+        
+    case KAMBOS_SIDEBAR_VAULT:
+        title = "Vault";
+        description =
+            "Stored and encrypted files.";
+        break;
+        
+    case KAMBOS_SIDEBAR_QUARANTINE:
+        title = "Quarantine";
+        description =
+            "Files isolated for inspection & deletion.";
+        break;
 
     case KAMBOS_SIDEBAR_HISTORY:
         title = "History";
         description =
-            "Your KAMBOS activity history will appear here.";
-        break;
-
-    case KAMBOS_SIDEBAR_KALLAS:
-        title = "Kallas";
-        description =
-            "Kallas messaging and communication tools will appear here.";
-        break;
-
-    case KAMBOS_SIDEBAR_QUARANTINE:
-        title = "Quarantine";
-        description =
-            "Files isolated for review will appear here.";
-        break;
-
-    case KAMBOS_SIDEBAR_SETTINGS:
-        title = "Settings";
-        description =
-            "Application preferences and security settings will appear here.";
+            "Communication and files history.";
         break;
 
     case KAMBOS_SIDEBAR_STATS:
         title = "Stats";
         description =
-            "KAMBOS activity and file statistics will appear here.";
+            "Communication and file statistics.";
         break;
-
+        
     case KAMBOS_SIDEBAR_USERS:
         title = "Users";
         description =
-            "User and access management will appear here.";
+            "User and access management.";
         break;
 
-    case KAMBOS_SIDEBAR_VAULT:
-        title = "Vault";
+    case KAMBOS_SIDEBAR_SETTINGS:
+        title = "Settings";
         description =
-            "Your Knowledge Garden and stored files will appear here.";
+            "Application preferences and security settings.";
+        break;
+
+    case KAMBOS_SIDEBAR_BUGS:
+        title = "Bugs";
+        description =
+            "Report design & security incidents.";
+        break;
+
+    case KAMBOS_SIDEBAR_NEWS:
+        title = "News";
+        description =
+            "Updates and all kind of news.";
         break;
 
     default:
@@ -2188,6 +2196,8 @@ gtk_box_pack_start(
     gtk_widget_set_margin_start(w->section_placeholder, 24);
     gtk_widget_set_margin_end(w->section_placeholder, 24);
 
+    // Beginning of lower section of KRYPTOS
+
     w->section_placeholder_title = gtk_label_new("History");
     gtk_label_set_markup(
         GTK_LABEL(w->section_placeholder_title),
@@ -2196,13 +2206,15 @@ gtk_box_pack_start(
         w->section_placeholder_title, GTK_ALIGN_CENTER);
 
     w->section_placeholder_desc = gtk_label_new(
-        "Your KAMBOS activity history will appear here.");
+        "Last file to be encrypted.");
     gtk_label_set_line_wrap(
         GTK_LABEL(w->section_placeholder_desc), TRUE);
     gtk_widget_set_halign(
         (w->section_placeholder_desc), GTK_ALIGN_CENTER);
     gtk_label_set_justify(
         GTK_LABEL(w->section_placeholder_desc), GTK_JUSTIFY_CENTER);
+
+    // End of lower section of KRYPTOS
 
     gtk_box_pack_start(
         GTK_BOX(w->section_placeholder),
